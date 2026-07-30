@@ -1,0 +1,4 @@
+(sym_lib_table
+  (version 0)
+  (lib (name "Bop It-easyedapro")(type "KiCad")(uri "${KIPRJMOD}/Bop It-easyedapro.kicad_sym")(options "")(descr ""))
+)

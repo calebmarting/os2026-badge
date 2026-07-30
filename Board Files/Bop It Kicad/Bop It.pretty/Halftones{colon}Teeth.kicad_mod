@@ -1,0 +1,117 @@
+(footprint "Halftones{colon}Teeth"
+	(version 20241229)
+	(generator "pcbnew")
+	(generator_version "9.0")
+	(layer "F.Cu")
+	(property "Reference" "REF**"
+		(at 0 0 0)
+		(layer "F.SilkS")
+		(uuid "a9c26c13-e599-49b0-9834-675abcf0788a")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Value" ""
+		(at 0 0 0)
+		(layer "F.Fab")
+		(uuid "d7bb9edf-fb74-4753-86ea-91b580e24b20")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Datasheet" ""
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "d34d7a53-e101-4142-a742-03f156809c13")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Description" ""
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "4de7a45d-74ff-4dd4-9f80-b400aaa7e596")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(fp_rect
+		(start -25.0225 -1.043)
+		(end 24.9585 1.1355)
+		(stroke
+			(width 0.05)
+			(type default)
+		)
+		(fill no)
+		(layer "F.CrtYd")
+		(uuid "448bb981-8aea-4808-936e-8e5df60604c8")
+	)
+	(fp_text user "${REFERENCE}"
+		(at 0 0 0)
+		(layer "F.Fab")
+		(uuid "786c0ff8-8a11-4dc7-a6e1-5b1153d50a14")
+		(effects
+			(font
+				(size 0.5 0.5)
+				(thickness 0.1)
+			)
+		)
+	)
+	(pad "1" smd circle
+		(at -24.0105 -0.031)
+		(size 1.524 1.524)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(thermal_bridge_angle 90)
+		(uuid "5867b852-95a1-43e2-9946-bc9c8d2ffc31")
+	)
+	(pad "2" smd circle
+		(at -15.851 0.07)
+		(size 1.524 1.524)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(thermal_bridge_angle 90)
+		(uuid "8d565646-82bf-42d2-ac3d-b7bde52a3a2c")
+	)
+	(pad "3" smd circle
+		(at -5.5075 0.1235)
+		(size 1.524 1.524)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(thermal_bridge_angle 90)
+		(uuid "a2ee00cb-207e-4d35-ada8-0b0bc2e494ab")
+	)
+	(pad "4" smd circle
+		(at 5.443 0.1235)
+		(size 1.524 1.524)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(thermal_bridge_angle 90)
+		(uuid "4b45358e-66fe-499e-80b1-79388703ebab")
+	)
+	(pad "5" smd circle
+		(at 15.786 0.07)
+		(size 1.524 1.524)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(thermal_bridge_angle 90)
+		(uuid "d84bab7d-985f-448e-a2cd-faa206c443da")
+	)
+	(pad "6" smd circle
+		(at 23.9465 -0.031)
+		(size 1.524 1.524)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(thermal_bridge_angle 90)
+		(uuid "8a9f5331-7b2b-4625-8b52-6d7dc656e369")
+	)
+	(embedded_fonts no)
+)

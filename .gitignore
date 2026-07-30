@@ -29,3 +29,11 @@ fp-info-cache
 # Exported BOM files
 *.xml
 *.csv
+
+# Platformio
+.pio
+.pioenvs
+.piolibdeps
+
+launch.json
+c_cpp_properties.json

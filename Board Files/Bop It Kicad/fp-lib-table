@@ -1,0 +1,4 @@
+(fp_lib_table
+  (version 7)
+  (lib (name "Bop It")(type "KiCad")(uri "$(KIPRJMOD)/Bop It.pretty")(options "")(descr ""))
+)
