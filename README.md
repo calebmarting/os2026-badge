@@ -1,3 +1,5 @@
+# NOTE: A PURCHASE LINK IS IN THE WORKS AND WILL BE AVAILABLE SHORTLY, MORE INFO TO COME
+
 # os2026-badge
 Schematics and firmware for the Open Sauce 2026 Badge and SAOs
 
