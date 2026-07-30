@@ -1,6 +1,6 @@
 // Very basic demo for the OS2026 badge. This demo uses the touch sensors, accelerometer, microphone, and button to demonstrate the capabilities of the badge.
 // I highly recommend using PlatformIO to build and upload this code to the badge.
-// If you have issues uploading, press
+// If you have issues uploading, press the reset button twice quickly to enter bootloader mode, then try uploading again.
 
 #include <Arduino.h>
 

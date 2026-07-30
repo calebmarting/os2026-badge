@@ -1,0 +1,3 @@
+[submodule "examples/putnamhack"]
+	path = examples/putnamhack
+	url = https://github.com/putnam/opensauce2026-badge
