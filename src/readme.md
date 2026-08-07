@@ -191,38 +191,85 @@ Everything adjustable is at the top of `guitar_config.h`:
 | `STRUM_MAX_HOLD_MS` | 250 | longer hold = mute instead of strum |
 | `OCTAVE_SHIFT` | 0 | **set to 1 if the low strings are inaudible** |
 | `PITCH_TRACKS_FRETS` | 1 | 0 latches pitch at the strum, losing hammer-ons |
-| `TOUCH_THRESHOLD` | 200 | raise if pads trigger on their own, lower if touches are missed |
+| `TOUCH_THRESHOLD` | 35 | positive; window is only 30-36 wide, see Touch pads |
+| `TOUCH_THRESHOLD_NEG` | 40 | negative; a bridged pad swings below its baseline |
+| `TOUCH_CAL_TARGET` | 120 | where COMPCAP parks each pad's idle reading |
 | `TOUCH_CAL_SAMPLES` | 16 | samples averaged per pad at boot |
 | `MASTER_DEBUG` | 0 | 1 prints resolved frets and pitches over serial |
 | `TOUCH_DEBUG` | 0 | 1 prints raw / baseline / delta per pad, plus the touch mask |
+| `TOUCH_DIAG` | 0 | 1 boots the touch bench instead of the instrument |
 
 ## Touch pads
 
-Each pad is calibrated once at boot and then compared against that fixed
-reference forever. **Keep your hands off the slider while a badge powers up** -
-whatever is being touched during calibration becomes that pad's idea of "not
-touched". Power-cycle to recalibrate.
+Two calibrations run at boot, in order. **Keep your hands off the slider while a
+badge powers up** - whatever is touched during calibration becomes that pad's
+idea of "not touched". Power-cycle to redo it.
 
-There is deliberately no adaptive baseline. It is the standard approach for
-capacitive touch, but it is wrong for an instrument: any tracking fast enough to
-follow thermal drift is also fast enough to creep up under a held chord and slide
-your fingers back out of the detection window. A fixed reference means a pad
-stays detected for exactly as long as you hold it.
+### COMPCAP calibration
 
-Pads are fully independent, so press as many at once as you like - barre chords
-and multi-string mutes all work.
+Each pad carries a standing parasitic capacitance that idles it at **400-680 of
+a ~1016 full scale**, so 40-67% of the range is gone before a finger arrives.
+One touch then pegs the ceiling, and a second touch pushes the conversion out of
+range entirely - both readings collapse and *neither* crosses the threshold.
+That is what made chords and barres impossible.
 
-To pick a threshold, set `TOUCH_DEBUG 1` and watch the deltas over serial:
+`calibrateCompCap()` binary-searches the PTC's compensation capacitor per pad to
+park every idle reading near `TOUCH_CAL_TARGET` (120), which restores ~900
+counts of headroom. Measured before and after on one badge:
 
-```
-pad raw/base/delta: 812/640/172 655/641/14 ...  mask 000001
-```
+| | Before | After |
+|---|---|---|
+| Idle baseline | 402-681, uneven | 120 on all six |
+| Single touch | pegged at 1016 | 167-900, unclipped |
+| Two adjacent pads | collapsed, mask `000000` | both detected |
 
-Put `TOUCH_THRESHOLD` between what an untouched pad idles at and what a real
-touch produces. Check the deltas hold up when you press several pads at once -
-if they shrink noticeably as you add fingers, the pads are coupling to each other
-electrically and the threshold needs to sit lower than the single-touch numbers
-suggest.
+Boot prints the chosen value per pad. A pad flagged `near compensation limit`
+has almost no margin left and is the first suspect if touch degrades.
+
+> This needs `setCompCap()`, which is private upstream, so `lib/Adafruit_FreeTouch`
+> is a lightly forked copy. Its header documents the change. The upstream package
+> is deliberately absent from `platformio.ini` - two copies of `adafruit_ptc.c`
+> would collide at link time.
+
+### Baseline and threshold
+
+After COMPCAP, each pad's resting level is averaged and then compared against
+forever. There is deliberately **no adaptive baseline**: any tracking fast enough
+to follow thermal drift is also fast enough to creep up under a held chord and
+slide your fingers back out of the detection window.
+
+Detection is **two-sided**. A pad usually reads above its baseline when touched,
+but when two pads are bridged by one finger the measured pad drains through its
+neighbour and swings *below* it instead - pad 3 reaches −56 to −110 while pad 4
+reads positive. Those are real touches and are counted as such.
+
+The two directions have very different margins, which is why they are separate
+defines:
+
+| | Crosstalk from an untouched neighbour | Real touch | Threshold |
+|---|---|---|---|
+| Positive | up to **+30** | as weak as **+36** | `TOUCH_THRESHOLD` 35 |
+| Negative | none - nothing drives a pad negative but a finger | **−56 to −110** | `TOUCH_THRESHOLD_NEG` 40 |
+
+The positive side is the weak point: six counts between the strongest crosstalk
+and the weakest real touch. Too high and light three-finger presses vanish, too
+low and a neighbour invents a fret. Re-measure with `TOUCH_DIAG` rather than
+nudging it blind.
+
+Pads are otherwise independent - press as many at once as you like.
+
+### Re-tuning
+
+`TOUCH_DEBUG 1` prints raw/baseline/delta per pad live. For anything deeper set
+`TOUCH_DIAG 1`, which boots into a bench instead of the instrument: short-press
+steps through acquisition configs, long-press sweeps COMPCAP and INTCAP and then
+recalibrates. It tracks the largest positive **and negative** excursion per pad,
+which is what makes the crosstalk visible at all.
+
+Two things already ruled out by measurement, so you needn't retry them: the
+**series resistor does nothing here** (R0 and R50K baselines differ by ~1 count),
+and `FREQ_MODE_SPREAD` is unusable through the stock constructor because
+`adafruit_ptc_get_config_default()` leaves `config.hops` uninitialised.
 
 `OCTAVE_SHIFT` is the one most likely to need changing. The piezo resonates near
 4 kHz and reproduces an 82 Hz low E poorly, so true pitch may be very quiet down

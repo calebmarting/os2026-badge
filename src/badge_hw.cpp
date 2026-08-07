@@ -23,6 +23,7 @@ static Adafruit_FreeTouch *touchPads[NUM_TOUCH_PADS] = {&qt_1, &qt_2, &qt_3, &qt
 // detection window. A fixed reference means a pad that reads high stays
 // detected for as long as you hold it. Power-cycle the badge to recalibrate.
 static int32_t touchBaseline[NUM_TOUCH_PADS];
+static uint16_t touchCompCap[NUM_TOUCH_PADS];
 static uint8_t cachedTouchMask = 0;
 
 static bool btnRaw = false;
@@ -30,6 +31,57 @@ static bool btnStable = false;
 static uint32_t btnChangeMs = 0;
 static uint32_t btnDownMs = 0;
 static bool btnReleaseEvent = false;
+
+#define COMPCAP_MAX 16383
+
+static int32_t avgMeasure(uint8_t pad, uint8_t samples)
+{
+    int32_t sum = 0;
+    for (uint8_t s = 0; s < samples; s++)
+    {
+        sum += touchPads[pad]->measure();
+    }
+    return sum / samples;
+}
+
+// Cancels each pad's standing parasitic capacitance so a touch has room to
+// register. Without this a pad idles at 400-680 of a ~1016 full scale, one
+// finger pegs the ceiling, and a second finger pushes the conversion out of
+// range - both readings then collapse and neither crosses the threshold. That
+// is what made chords and barres impossible.
+//
+// Binary search rather than a fixed value because the parasitic load differs
+// per pad, and direction-detecting rather than assumed because the SAMD21 PTC
+// is undocumented. Costs about 20 ms at boot.
+static void calibrateCompCap()
+{
+    for (uint8_t i = 0; i < NUM_TOUCH_PADS; i++)
+    {
+        touchPads[i]->setCompCap(0);
+        int32_t atLow = avgMeasure(i, 4);
+        touchPads[i]->setCompCap(COMPCAP_MAX);
+        bool risesWithCompCap = avgMeasure(i, 4) > atLow;
+
+        uint16_t lo = 0;
+        uint16_t hi = COMPCAP_MAX;
+        while (lo < hi)
+        {
+            uint16_t mid = lo + (hi - lo) / 2;
+            touchPads[i]->setCompCap(mid);
+            if ((avgMeasure(i, 2) > TOUCH_CAL_TARGET) == risesWithCompCap)
+            {
+                hi = mid;
+            }
+            else
+            {
+                lo = mid + 1;
+            }
+        }
+
+        touchCompCap[i] = lo;
+        touchPads[i]->setCompCap(lo);
+    }
+}
 
 void hwBegin()
 {
@@ -61,6 +113,8 @@ void hwBegin()
     }
     delay(50);
 
+    calibrateCompCap();
+
     // This is the only calibration the pads ever get, so average enough samples
     // that noise cannot skew a pad's threshold for the whole session. Keep hands
     // off the slider through here: whatever is being touched at boot becomes
@@ -74,10 +128,19 @@ void hwBegin()
         }
         touchBaseline[i] = sum / TOUCH_CAL_SAMPLES;
 
-        Serial.print("Pad ");
-        Serial.print(i + 1);
-        Serial.print(" baseline ");
-        Serial.println(touchBaseline[i]);
+        char line[64];
+        snprintf(line, sizeof(line), "Pad %u  compcap %5u  baseline %4ld",
+                 (unsigned)(i + 1), (unsigned)touchCompCap[i], (long)touchBaseline[i]);
+        Serial.print(line);
+        // A pad that needs almost the whole register has nothing left to absorb
+        // drift. Pad 3 sits here on the reference badge - it carries the most
+        // parasitic capacitance and bottoms out around 81 even fully
+        // compensated, so it is the first place to look if touch degrades.
+        if (touchCompCap[i] > (COMPCAP_MAX - COMPCAP_MAX / 16))
+        {
+            Serial.print("   <- near compensation limit");
+        }
+        Serial.println();
     }
 }
 
@@ -91,7 +154,11 @@ void touchUpdate()
     for (uint8_t i = 0; i < NUM_TOUCH_PADS; i++)
     {
         reading[i] = touchPads[i]->measure();
-        if (reading[i] > touchBaseline[i] + TOUCH_THRESHOLD)
+        // Either direction counts as a touch. A pad bridged to a held
+        // neighbour drains through it and swings negative rather than
+        // positive, and that is still a finger on the pad.
+        int32_t delta = reading[i] - touchBaseline[i];
+        if (delta > TOUCH_THRESHOLD || delta < -TOUCH_THRESHOLD_NEG)
         {
             mask |= (1 << i);
         }

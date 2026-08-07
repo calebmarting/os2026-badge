@@ -15,6 +15,7 @@
 #include "guitar_config.h"
 #include "master.h"
 #include "slave.h"
+#include "touch_diag.h"
 
 static uint8_t badgeId = 0;
 
@@ -23,6 +24,11 @@ void setup()
     Serial.begin(115200);
 
     hwBegin();
+
+#if TOUCH_DIAG
+    touchDiagRun(); // never returns; the badge plays nothing in this build
+#endif
+
     badgeId = loadBadgeId();
 
     if (badgeId == 0)

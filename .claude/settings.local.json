@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(\"/c/Users/cmart/.platformio/penv/Scripts/platformio.exe\" run *)",
+      "Bash(find ~/.platformio /c/bench/os2026-badge/.pio -iname \"*FreeTouch*\" -name \"*.cpp\" 2>/dev/null | head)",
+      "Read(//c/Users/cmart/.platformio/**)",
+      "Bash(sed -n '/uint16_t Adafruit_FreeTouch::measure/,/^}/p' Adafruit_FreeTouch.cpp)",
+      "Bash(sed -n '/Adafruit_FreeTouch::measureRaw/,/^}/p' Adafruit_FreeTouch.cpp)",
+      "Bash(cp src/guitar_config.h /tmp/gc2.bak)",
+      "Bash(sed -i 's/^#define TOUCH_DEBUG 0$/#define TOUCH_DEBUG 1/' src/guitar_config.h)",
+      "Bash(cp /tmp/gc2.bak src/guitar_config.h)",
+      "Read(//tmp/**)",
+      "Bash(cp src/guitar_config.h /tmp/gc3.bak)",
+      "Bash(sed -i 's/^#define TOUCH_DIAG 0$/#define TOUCH_DIAG 1/' src/guitar_config.h)",
+      "Bash(mkdir -p lib/Adafruit_FreeTouch)",
+      "Bash(cp __TRACKED_VAR__/Adafruit_FreeTouch.cpp __TRACKED_VAR__/Adafruit_FreeTouch.h __TRACKED_VAR__/adafruit_ptc.c __TRACKED_VAR__/adafruit_ptc.h __TRACKED_VAR__/samd21_ptc_component.h __TRACKED_VAR__/library.properties lib/Adafruit_FreeTouch/)",
+      "Bash(python -c ' *)"
+    ],
+    "additionalDirectories": [
+      "\\tmp"
+    ]
+  }
+}

@@ -41,13 +41,41 @@
 // One-sided, in raw FreeTouch counts above the pad's boot baseline. The
 // baseline is measured once at startup and never moves, so a pad stays detected
 // for as long as you hold it - power-cycle the badge to recalibrate.
-#define TOUCH_THRESHOLD 30
+// This window is genuinely tight and was measured, not guessed. Idle noise is
+// +/-1 count, but pressing one pad puts up to **+30** of crosstalk on its
+// neighbour, while a real touch can be as weak as **+36** when three pads are
+// held and the charge is shared. Six counts of daylight, so 35 splits it with
+// about 5 either way.
+//
+// This is the weakest part of the touch system. Too high and light multi-finger
+// presses vanish; too low and a neighbour's crosstalk invents a fret. If it
+// misbehaves, re-measure with TOUCH_DIAG rather than nudging blind.
+#define TOUCH_THRESHOLD 35
+
+// A held pad can also read *below* its baseline. When two pads are bridged by
+// one finger, the measured pad drains through its neighbour and swings
+// negative - pad 3 reaches -56 to -110 while pad 4 reads positive. That is a
+// real touch, so it has to count as one.
+//
+// This is a separate define because it is a different physical effect with a
+// different margin: crosstalk from an untouched neighbour is always *positive*
+// (pressing pad 4 without pad 3 leaves pad 3 at 0-1), so nothing pushes a pad
+// negative except being touched. The floor is how far a pad could drift down on
+// its own - pad 3 bottoms out around 81 against a baseline of 120.
+#define TOUCH_THRESHOLD_NEG 40
 // Samples averaged per pad during that one calibration pass.
 #define TOUCH_CAL_SAMPLES 16
+// Where per-pad COMPCAP calibration aims to park each idle reading. Full scale
+// is ~1016, and a pad left uncalibrated idles at 400-680, so most of the range
+// is gone before a finger arrives. Parking low leaves room for the touch.
+#define TOUCH_CAL_TARGET 120
 // 1 = every badge prints raw reading / baseline / delta per pad plus the touch
 // mask. Use it to pick TOUCH_THRESHOLD: watch the delta a real touch produces
 // against the delta an untouched pad sits at, and put the threshold between.
 #define TOUCH_DEBUG 1
+// 1 = boot into the touch bench instead of the instrument, to sweep the analog
+// settings on real hardware. See touch_diag.h. Never plays a note.
+#define TOUCH_DIAG 0
 #define BUTTON_DEBOUNCE_MS 75
 #define LONG_PRESS_MS 1000
 // Setup mode gives up and reboots unchanged after this long with no input.
