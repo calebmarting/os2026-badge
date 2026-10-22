@@ -113,6 +113,9 @@ LEDs, on every badge:
 | `LED_BUILTIN` | pad 6 |
 | Right eye | this badge is sounding a note |
 | Forehead | **only** on the master, and **only** in ukulele mode |
+| Everything, fast blink | calibrating soon - hands off the neck |
+| Everything, solid | calibrating, one badge at a time |
+| Slider filling up | receiving a firmware update |
 
 ## Setting a badge's ID
 
@@ -130,61 +133,51 @@ LEDs, on every badge:
 3. **Long-press** again to save. The LEDs blink three times and the badge reboots
    into its new role.
 
-The ID lives in flash and survives a power cycle. Doing nothing for 30 s leaves
-setup without saving. A badge that has never been configured comes up as the master.
+The ID lives in the last row of flash, outside the firmware, so it survives a
+power cycle and an I2C firmware update - but not a USB upload, which erases all
+of flash. Doing nothing for 30 s leaves setup without saving. A badge that has
+never been configured comes up as the master.
 
 Outside setup mode, a **short** press does something different depending on the
-badge: on the master it toggles ukulele mode, on a fret badge it toggles a capo.
+badge: on the master it toggles ukulele mode (and a double tap recalibrates), on
+a fret badge it toggles a capo.
 
 ## Wiring
 
 Bus the badges together over the SAO ports: SDA (D11), SCL (D12), plus GND and 3V3.
 
-Three things will bite you otherwise:
-
-- **Lift the I2C pull-ups on all but two badges.** Each badge carries 5.1 k on SDA
-  and SCL. Twelve in parallel is about 425 ohms, which needs ~7.8 mA of sink per
-  pin against a 3 mA spec. The symptom is polls returning garbage as you add badges.
-- **Only one badge may be ID 0.** Two controllers on one bus will collide.
+- **Keep the I2C pull-ups on one badge only** (or two). Each badge carries 5.1 k on
+  SDA and SCL; twelve in parallel is about 425 ohms, far more sink current than
+  the pins are rated for. This build keeps them on the master.
+- **Only one badge may be ID 0.** Two controllers on one bus will collide - and a
+  badge fresh off a USB upload comes up as ID 0 until you set it.
 - **The firmware never touches 0x18.** Every badge has an accelerometer at that
-  address, so a chained neck has 13 devices answering it. That is also why the
+  address, which is why fret badges answer at 0x30 + ID instead, and why the
   guitar does not use the accelerometer at all.
 
-The bus stays at the default 100 kHz on purpose - with 12 badges plus cabling the
-capacitance is near the 400 pF limit and 400 kHz will not make the edges.
+The bus runs at 100 kHz - with 12 badges plus cabling the capacitance is near the
+400 pF limit and 400 kHz will not make the edges.
 
-## Protocol
+## Calibration
 
-Master reads 1 byte from each fret badge:
+Every badge calibrates at power-up, one badge at a time: the whole neck **blinks
+fast - take your hands off** - then lights solid while each badge in turn
+measures its idle pads. Whatever is touched during calibration becomes that pad's
+idea of "not touched".
 
-```
-bit 0..5 = pad 1..6 held (pad 1 = low E)
-```
+**Double-tap the master's button** to recalibrate whenever the neck starts acting
+up (a single tap is the ukulele toggle, so it now lands a moment later). A badge
+that reboots on its own - a brown-out, or plugged in late - is recalibrated
+automatically when it reappears.
 
-In ukulele mode a badge masks pads 2 and 5 out of that byte, so those bits always
-read 0 and a touch there is genuinely ignored.
+## Protocol, timing and tuning
 
-Writes are told apart by **length**. One byte is the instrument:
+See [GUITAR.md](../GUITAR.md): the scan token, the wire protocol and frame format,
+the timing, every tunable constant, the master's serial console (live touch logs,
+raw/baseline/delta for any badge, changing settings without a reflash), and the
+firmware update path.
 
-```
-0 = guitar    1 = ukulele
-```
-
-Two bytes are a frequency in Hz, little-endian, 0 to silence:
-
-```
-byte 0 = freq & 0xFF
-byte 1 = freq >> 8
-```
-
-The master re-sends the mode once a second. A badge that browns out and restarts
-still answers polls, so the master never sees it drop - but it comes back up in
-guitar mode, and without the refresh it would sit there reading the wrong pads
-until the next time you toggled.
-
-## Tuning the feel
-
-Everything adjustable is at the top of `guitar_config.h`:
+The playing-feel settings stay in `guitar_config.h`:
 
 | Define | Default | |
 |---|---|---|
@@ -193,19 +186,14 @@ Everything adjustable is at the top of `guitar_config.h`:
 | `GUITAR_OCTAVE_SHIFT` | 1 | guitar plays an octave above concert pitch |
 | `UKE_OCTAVE_SHIFT` | 0 | ukulele plays at concert pitch |
 | `PITCH_TRACKS_FRETS` | 1 | 0 latches pitch at the strum, losing hammer-ons |
-| `TOUCH_THRESHOLD` | 35 | positive; window is only 30-36 wide, see Touch pads |
-| `TOUCH_THRESHOLD_NEG` | 40 | negative; a bridged pad swings below its baseline |
-| `TOUCH_CAL_TARGET` | 120 | where COMPCAP parks each pad's idle reading |
-| `TOUCH_CAL_SAMPLES` | 16 | samples averaged per pad at boot |
 | `MASTER_DEBUG` | 0 | 1 prints resolved frets and pitches over serial |
-| `TOUCH_DEBUG` | 0 | 1 prints raw / baseline / delta per pad, plus the touch mask |
 | `TOUCH_DIAG` | 0 | 1 boots the touch bench instead of the instrument |
 
-## Touch pads
+`GUITAR_OCTAVE_SHIFT` defaults to 1 because the piezo resonates near 4 kHz and
+reproduces an 82 Hz low E poorly. Set it to 2 for brighter still, or 0 for
+concert pitch.
 
-Two calibrations run at boot, in order. **Keep your hands off the slider while a
-badge powers up** - whatever is touched during calibration becomes that pad's
-idea of "not touched". Power-cycle to redo it.
+## Touch pads
 
 ### COMPCAP calibration
 
@@ -215,9 +203,9 @@ One touch then pegs the ceiling, and a second touch pushes the conversion out of
 range entirely - both readings collapse and *neither* crosses the threshold.
 That is what made chords and barres impossible.
 
-`calibrateCompCap()` binary-searches the PTC's compensation capacitor per pad to
-park every idle reading near `TOUCH_CAL_TARGET` (120), which restores ~900
-counts of headroom. Measured before and after on one badge:
+Calibration binary-searches the PTC's compensation capacitor per pad to park
+every idle reading near `TOUCH_CAL_TARGET` (120), which restores ~900 counts of
+headroom. Measured before and after on one badge:
 
 | | Before | After |
 |---|---|---|
@@ -225,65 +213,49 @@ counts of headroom. Measured before and after on one badge:
 | Single touch | pegged at 1016 | 167-900, unclipped |
 | Two adjacent pads | collapsed, mask `000000` | both detected |
 
-Boot prints the chosen value per pad. A pad flagged `near compensation limit`
-has almost no margin left and is the first suspect if touch degrades.
-
 > This needs `setCompCap()`, which is private upstream, so `lib/Adafruit_FreeTouch`
-> is a lightly forked copy. Its header documents the change. The upstream package
+> is a lightly forked copy. Its header documents the changes. The upstream package
 > is deliberately absent from `platformio.ini` - two copies of `adafruit_ptc.c`
 > would collide at link time.
 
 ### Baseline and threshold
 
-After COMPCAP, each pad's resting level is averaged and then compared against
-forever. There is deliberately **no adaptive baseline**: any tracking fast enough
-to follow thermal drift is also fast enough to creep up under a held chord and
-slide your fingers back out of the detection window.
+The single-badge numbers the thresholds were picked from, measured before the
+scan token existed:
 
-Detection is **two-sided**. A pad usually reads above its baseline when touched,
-but when two pads are bridged by one finger the measured pad drains through its
-neighbour and swings *below* it instead - pad 3 reaches −56 to −110 while pad 4
-reads positive. Those are real touches and are counted as such.
+| | Crosstalk from an untouched neighbour | Real touch |
+|---|---|---|
+| Positive | up to **+30** | as weak as **+36** |
+| Negative | none from the neighbour alone | **-56 to -110** on a pad bridged to a held neighbour |
 
-The two directions have very different margins, which is why they are separate
-defines:
-
-| | Crosstalk from an untouched neighbour | Real touch | Threshold |
-|---|---|---|---|
-| Positive | up to **+30** | as weak as **+36** | `TOUCH_THRESHOLD` 35 |
-| Negative | none - nothing drives a pad negative but a finger | **−56 to −110** | `TOUCH_THRESHOLD_NEG` 40 |
-
-The positive side is the weak point: six counts between the strongest crosstalk
-and the weakest real touch. Too high and light three-finger presses vanish, too
-low and a neighbour invents a fret. Re-measure with `TOUCH_DIAG` rather than
-nudging it blind.
-
-Pads are otherwise independent - press as many at once as you like.
+A pad turns on above 35 and off below 30, needs two agreeing scans to change, and
+its baseline only drifts while nothing anywhere on the neck is held. A negative
+reading counts as a touch only while an adjacent pad is held - the bridged-finger
+case above - and otherwise means the baseline is wrong, so it gets re-zeroed.
+[GUITAR.md](../GUITAR.md#touch-detection) has the full rules and the knobs.
 
 ### Re-tuning
 
-`TOUCH_DEBUG 1` prints raw/baseline/delta per pad live. For anything deeper set
-`TOUCH_DIAG 1`, which boots into a bench instead of the instrument: short-press
-steps through acquisition configs, long-press sweeps COMPCAP and INTCAP and then
-recalibrates. It tracks the largest positive **and negative** excursion per pad,
-which is what makes the crosstalk visible at all.
+On the master's console, `watch N` streams raw/baseline/delta for badge N and
+`set` changes a threshold on every badge at once - no reflash. For anything deeper
+set `TOUCH_DIAG 1`, which boots one badge into a bench instead of the instrument:
+short-press steps through acquisition configs, long-press sweeps COMPCAP and
+INTCAP and then recalibrates. It tracks the largest positive **and negative**
+excursion per pad.
 
-Two things already ruled out by measurement, so you needn't retry them: the
-**series resistor does nothing here** (R0 and R50K baselines differ by ~1 count),
-and `FREQ_MODE_SPREAD` is unusable through the stock constructor because
-`adafruit_ptc_get_config_default()` leaves `config.hops` uninitialised.
+Already ruled out by measurement on a single badge: the **series resistor does
+almost nothing here** (R0 and R50K baselines differ by ~1 count).
 
-`GUITAR_OCTAVE_SHIFT` defaults to 1 because the piezo resonates near 4 kHz and
-reproduces an 82 Hz low E poorly. Set it to 2 for brighter still, or 0 for
-concert pitch.
-
-## Building
+## Building and updating
 
 ```
 pio run              # build
-pio run -t upload    # flash the badge that is plugged in
+pio run -t upload    # flash the one badge plugged in over USB
+pio run -t ota       # update ALL badges through the master (see GUITAR.md)
 ```
 
-Double-tap the small reset button in the centre of the T piece to enter the
-bootloader first. Flash the master last so it is the badge left on USB for
-serial debugging at 115200.
+The first time, every badge has to be flashed over USB - double-tap the small
+reset button in the centre of the T piece to enter the bootloader - and then have
+its ID set again, since a USB upload erases it. From then on, plug in only the
+master and run `pio run -t ota`: it updates the whole neck over I2C, and every
+badge keeps its ID.
