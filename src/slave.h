@@ -1,7 +1,8 @@
 // Fret badge: IDs 1..11, where badge N is fret N.
 //
-// It answers a 1-byte poll with which of its pads are held, and plays whatever
-// frequency the master writes to it.
+// It measures its pads only when the master hands it the scan token, answers
+// with a frame of which pads are held, and plays whatever frequency the master
+// writes to it.
 #pragma once
 
 #include <Arduino.h>

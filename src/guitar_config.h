@@ -38,10 +38,20 @@ inline uint8_t wireAddress(uint8_t badgeId) { return I2C_ADDR_BASE + badgeId; }
 // 0 = pitch is latched at the moment of the strum.
 #define PITCH_TRACKS_FRETS 1
 
-// Master poll period. 12 slaves at 100 kHz is ~3 ms, so this is near the floor.
-#define POLL_INTERVAL_MS 4
-// How often the master retries one absent ID, so badges can be hot-added.
-#define PROBE_INTERVAL_MS 1000
+// How long the bus stays silent after the master hands a badge the scan token
+// (see scan_protocol.h). 0 = derive it: the master times its own 6-pad scan,
+// takes the longest seen, and adds 25% plus SCAN_MARGIN_US for the fret badge
+// to notice the token. Set a fixed value here only to override that.
+#define SCAN_US 0
+#define SCAN_MARGIN_US 250
+// Missed tokens in a row before a fret badge counts as gone. Until then the
+// master keeps its last good frame; after, it reads as nothing held.
+#define STALE_SCANS 4
+
+// 1 = the master logs every badge's pads whenever any of them changes, plus a
+// stats line every LOG_STATS_MS with the cycle time, scan window and misses.
+#define MASTER_LOG 1
+#define LOG_STATS_MS 1000
 
 // 1 = the master prints the resolved fret and pitch per string over serial,
 // which is how you check a fret badge is being read correctly.

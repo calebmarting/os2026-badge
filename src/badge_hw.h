@@ -25,9 +25,12 @@ extern const uint8_t sliderLedPins[NUM_SLIDER_LEDS];
 // setup(), with nothing touching the slider.
 void hwBegin();
 
-// Samples all 6 pads against their fixed baselines. Cheap enough to call every
-// loop. Pads are independent, so any number can read as touched at once.
-void touchUpdate();
+// One full 6-pad scan: hands the pads to the PTC, measures each against its
+// fixed baseline, then drives them all LOW again. Pads are independent, so any
+// number can read as touched at once. Returns how long the scan took in us -
+// this is the measurement window, so nothing else may happen on the bus or the
+// LEDs while it runs.
+uint32_t touchUpdate();
 // Bit 0..5 = pad 1..6 touched. This is also the on-the-wire poll format.
 uint8_t touchMask();
 

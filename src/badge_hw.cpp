@@ -2,6 +2,7 @@
 #include "guitar_config.h"
 
 #include "Adafruit_FreeTouch.h"
+#include <wiring_private.h>
 
 const uint8_t sliderLedPins[NUM_SLIDER_LEDS] = {1, 0, 3, 2, 4};
 
@@ -15,6 +16,8 @@ static Adafruit_FreeTouch qt_4 = Adafruit_FreeTouch(ADC_BATTERY, OVERSAMPLE_4, R
 static Adafruit_FreeTouch qt_5 = Adafruit_FreeTouch(A4, OVERSAMPLE_4, RESISTOR_50K, FREQ_MODE_NONE);
 static Adafruit_FreeTouch qt_6 = Adafruit_FreeTouch(A5, OVERSAMPLE_4, RESISTOR_50K, FREQ_MODE_NONE);
 static Adafruit_FreeTouch *touchPads[NUM_TOUCH_PADS] = {&qt_1, &qt_2, &qt_3, &qt_4, &qt_5, &qt_6};
+// Must match the constructors above.
+static const uint8_t kPadPins[NUM_TOUCH_PADS] = {A1, A2, A3, ADC_BATTERY, A4, A5};
 
 // Measured once at boot and then left alone for the whole session. An adaptive
 // baseline is the usual approach for capacitive touch, but it is wrong for an
@@ -33,6 +36,30 @@ static uint32_t btnDownMs = 0;
 static bool btnReleaseEvent = false;
 
 #define COMPCAP_MAX 16383
+
+// Hands the pads back to the PTC. FreeTouch muxes a pad to peripheral B in
+// begin() and never touches the pin again, so after padsIdle() has turned them
+// into plain outputs this is all a measurement needs - the PTC's own Y-line
+// configuration is untouched by pinMode(). PIO_ANALOG is peripheral B.
+static void padsMux()
+{
+    for (uint8_t i = 0; i < NUM_TOUCH_PADS; i++)
+    {
+        pinPeripheral(kPadPins[i], PIO_ANALOG);
+    }
+}
+
+// Drives every pad hard LOW. Between measurements the pads are then just more
+// ground for the player's hand, instead of floating PTC inputs that another
+// badge's charge pulses can couple through.
+static void padsIdle()
+{
+    for (uint8_t i = 0; i < NUM_TOUCH_PADS; i++)
+    {
+        digitalWrite(kPadPins[i], LOW);
+        pinMode(kPadPins[i], OUTPUT);
+    }
+}
 
 static int32_t avgMeasure(uint8_t pad, uint8_t samples)
 {
@@ -113,6 +140,7 @@ void hwBegin()
     }
     delay(50);
 
+    // begin() left the pads muxed to the PTC, which is what calibration needs.
     calibrateCompCap();
 
     // This is the only calibration the pads ever get, so average enough samples
@@ -142,18 +170,28 @@ void hwBegin()
         }
         Serial.println();
     }
+
+    padsIdle();
 }
 
 // Every pad is an independent comparison against its fixed boot baseline, so
 // any number of them can be held at once and none of them time out.
-void touchUpdate()
+uint32_t touchUpdate()
 {
     int32_t reading[NUM_TOUCH_PADS];
     uint8_t mask = 0;
 
+    uint32_t startUs = micros();
+    padsMux();
     for (uint8_t i = 0; i < NUM_TOUCH_PADS; i++)
     {
         reading[i] = touchPads[i]->measure();
+    }
+    padsIdle();
+    uint32_t scanUs = micros() - startUs;
+
+    for (uint8_t i = 0; i < NUM_TOUCH_PADS; i++)
+    {
         // Either direction counts as a touch. A pad bridged to a held
         // neighbour drains through it and swings negative rather than
         // positive, and that is still a finger on the pad.
@@ -187,9 +225,13 @@ void touchUpdate()
         {
             Serial.print((mask & (1 << i)) ? '1' : '0');
         }
-        Serial.println();
+        Serial.print("  scan ");
+        Serial.print(scanUs);
+        Serial.println("us");
     }
 #endif
+
+    return scanUs;
 }
 
 uint8_t touchMask()

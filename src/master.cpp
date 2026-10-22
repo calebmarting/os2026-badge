@@ -1,6 +1,7 @@
 #include "master.h"
 #include "badge_hw.h"
 #include "guitar_config.h"
+#include "scan_protocol.h"
 
 #include <Wire.h>
 
@@ -8,12 +9,28 @@
 // so toggling never costs a flash page erase.
 static const Instrument *inst = &kGuitar;
 
-// Ukulele strings land on slider LEDs 1, 2, 4 and 5, leaving the middle one
-// dark so the display mirrors the pads merging at each end of the slider.
-static const uint8_t kUkeStringLeds[NUM_UKE_STRINGS] = {0, 1, 3, 4};
+// What the master knows about one fret badge.
+struct FretLink
+{
+    // Pads 1..6 as last measured, from the last frame that checked out. A bad
+    // or missing frame leaves this alone, so one glitch cannot drop a fret.
+    uint8_t pads;
+    bool capo;
+    // Answered within the last STALE_SCANS tokens. A stale badge reads as
+    // nothing held, so a dead fret can never pin a note on.
+    bool fresh;
+    uint8_t misses;      // consecutive, resets on a good frame
+    uint16_t missesLog;  // since the last stats line
+};
 
-static bool slavePresent[MAX_BADGES];
-static uint8_t slavePads[MAX_BADGES];
+static FretLink frets[MAX_BADGES];
+static uint8_t scanSeq = 0;
+
+// Longest 6-pad scan the master has timed on itself. Every badge runs the same
+// firmware with the same settings, so it is the best available estimate of how
+// long a fret badge needs - and it follows any change to the acquisition
+// settings without anyone re-measuring.
+static uint32_t ownScanMaxUs = 0;
 
 static uint8_t fretForString[NUM_STRINGS];
 static uint16_t stringFreq[NUM_STRINGS]; // currently sounding, 0 = silent
@@ -22,92 +39,234 @@ static uint32_t stringStartMs[NUM_STRINGS];
 static uint32_t padPressMs[NUM_STRINGS];
 static bool padWasDown[NUM_STRINGS];
 
-static uint32_t lastPollMs = 0;
-static uint32_t lastProbeMs = 0;
-static uint8_t probeCursor = 1;
+// Cycle timing, reset every stats line.
+static uint32_t cycleSumUs = 0;
+static uint32_t cycleMaxUs = 0;
+static uint32_t cycleCount = 0;
+static uint32_t lastStatsMs = 0;
+static uint32_t lastRecoverMs = 0;
 
-static void setStringFreq(uint8_t s, uint16_t freq);
+// How long the bus stays silent after handing a badge the token.
+static uint32_t scanWindowUs()
+{
+#if SCAN_US > 0
+    return SCAN_US;
+#else
+    return ownScanMaxUs + ownScanMaxUs / 4 + SCAN_MARGIN_US;
+#endif
+}
+
+// SERCOM2 is the MKR Zero's Wire port. The core's master code busy-waits on
+// the bus with no timeout, so a badge that wedges SCL low would hang the whole
+// instrument. LOWTOUT aborts any transfer where SCL is held low for 25-35 ms -
+// the hardware then sets the very flags those loops wait on, so they fall
+// through with an error. INACTOUT returns a bus left "busy" by a glitch to idle.
+// Both live in CTRLA, which is only writable with the peripheral disabled.
+static void enableBusTimeouts()
+{
+    SercomI2cm &i2c = SERCOM2->I2CM;
+    i2c.CTRLA.bit.ENABLE = 0;
+    while (i2c.SYNCBUSY.bit.ENABLE)
+    {
+    }
+    i2c.CTRLA.bit.LOWTOUTEN = 1;
+    i2c.CTRLA.bit.INACTOUT = 3; // 20-21 SCL cycles, ~200 us at 100 kHz
+    i2c.CTRLA.bit.ENABLE = 1;
+    while (i2c.SYNCBUSY.bit.ENABLE)
+    {
+    }
+    // Same as Wire.begin(): the bus state starts unknown until forced idle.
+    i2c.STATUS.bit.BUSSTATE = 1;
+    while (i2c.SYNCBUSY.bit.SYSOP)
+    {
+    }
+}
+
+static void busBegin()
+{
+    Wire.begin();
+    enableBusTimeouts();
+}
+
+// A badge reset mid-byte can be left holding SDA low, waiting for clocks that
+// will never come. Nine clocks walk it out of any byte, then a STOP frees the
+// bus. Pins are driven open-drain style: LOW, or released to the pull-up.
+static void busRecover()
+{
+    Wire.end();
+    pinMode(PIN_WIRE_SDA, INPUT);
+    pinMode(PIN_WIRE_SCL, INPUT);
+    for (uint8_t i = 0; i < 9 && digitalRead(PIN_WIRE_SDA) == LOW; i++)
+    {
+        digitalWrite(PIN_WIRE_SCL, LOW);
+        pinMode(PIN_WIRE_SCL, OUTPUT);
+        delayMicroseconds(5);
+        pinMode(PIN_WIRE_SCL, INPUT);
+        delayMicroseconds(5);
+    }
+    digitalWrite(PIN_WIRE_SDA, LOW);
+    pinMode(PIN_WIRE_SDA, OUTPUT);
+    delayMicroseconds(5);
+    pinMode(PIN_WIRE_SDA, INPUT);
+
+    busBegin();
+    Serial.println("I2C bus recovered");
+}
 
 static void writeFreq(uint8_t id, uint16_t freq)
 {
     Wire.beginTransmission(wireAddress(id));
+    Wire.write(CMD_FREQ);
     Wire.write((uint8_t)(freq & 0xFF));
     Wire.write((uint8_t)(freq >> 8));
-    if (Wire.endTransmission() != 0)
+    // A badge that is not listening falls out through the scan path, which is
+    // the one place staleness is decided.
+    Wire.endTransmission();
+}
+
+static void printPads(uint8_t pads)
+{
+    for (uint8_t i = 0; i < NUM_PADS; i++)
     {
-        slavePresent[id] = false;
-        slavePads[id] = 0;
+        Serial.print((pads & (1 << i)) ? '1' : '.');
     }
 }
 
-// A 1-byte write is a mode; a 2-byte write is a frequency. Length is what tells
-// them apart on the slave, so this must stay exactly one byte.
-static void writeMode(uint8_t id)
+// One line per change, so a touch log reads as a timeline: every badge's pads,
+// pad 1 leftmost. "------" is a stale badge, a trailing 'c' a capo.
+static void logPads()
 {
-    Wire.beginTransmission(wireAddress(id));
-    Wire.write((uint8_t)(inst == &kUkulele ? 1 : 0));
-    if (Wire.endTransmission() != 0)
-    {
-        slavePresent[id] = false;
-        slavePads[id] = 0;
-    }
-}
-
-static void broadcastMode()
-{
+#if MASTER_LOG
+    Serial.print(millis());
+    Serial.print(" 0:");
+    printPads(touchMask());
     for (uint8_t id = 1; id < MAX_BADGES; id++)
     {
-        if (slavePresent[id])
+        Serial.print(' ');
+        Serial.print(id);
+        Serial.print(':');
+        if (frets[id].fresh)
         {
-            writeMode(id);
+            printPads(frets[id].pads);
+            Serial.print(frets[id].capo ? 'c' : ' ');
+        }
+        else
+        {
+            Serial.print("------ ");
         }
     }
+    Serial.println();
+#endif
 }
 
-static bool probe(uint8_t id)
+static bool noteMiss(uint8_t id)
 {
-    Wire.beginTransmission(wireAddress(id));
-    return Wire.endTransmission() == 0;
+    FretLink &f = frets[id];
+    if (f.misses < 255)
+    {
+        f.misses++;
+    }
+    f.missesLog++;
+
+    if (f.fresh && f.misses >= STALE_SCANS)
+    {
+        f.fresh = false;
+        f.pads = 0;
+        f.capo = false;
+        Serial.print("Fret ");
+        Serial.print(id);
+        Serial.println(" stale");
+        return true;
+    }
+    return false;
+}
+
+// Returns true when anything the touch log shows has changed.
+static bool noteFrame(uint8_t id, uint8_t b0)
+{
+    FretLink &f = frets[id];
+    uint8_t pads = b0 & FRAME_PAD_BITS;
+    bool capo = (b0 & FRAME_STATUS_CAPO) != 0;
+    bool changed = !f.fresh || pads != f.pads || capo != f.capo;
+
+    f.misses = 0;
+    f.pads = pads;
+    f.capo = capo;
+
+    if (!f.fresh)
+    {
+        f.fresh = true;
+        Serial.print("Fret ");
+        Serial.print(id);
+        Serial.println(" joined");
+        // Bring the newcomer in step with whatever its string is doing. The
+        // instrument needs nothing: it rides along with every token.
+        writeFreq(id, stringFreq[stringIndexForBadge(inst, id)]);
+    }
+    return changed;
+}
+
+// One badge's turn with the token. Nothing else happens on the bus between the
+// CMD_SCAN and the read, and no other badge measures, so this badge's scan is
+// the only charge moving anywhere on the neck. Never blocks on a dead badge: a
+// NACK skips the window, and the bus timeouts cover a wedged one.
+static bool scanFret(uint8_t id, uint8_t flags)
+{
+    uint8_t addr = wireAddress(id);
+
+    Wire.beginTransmission(addr);
+    Wire.write(CMD_SCAN);
+    Wire.write(flags);
+    Wire.write(scanSeq);
+    if (Wire.endTransmission() != 0)
+    {
+        return noteMiss(id);
+    }
+
+    uint32_t sentUs = micros();
+    uint32_t windowUs = scanWindowUs();
+    while (micros() - sentUs < windowUs)
+    {
+    }
+
+    if (Wire.requestFrom(addr, (uint8_t)FRAME_LEN) != FRAME_LEN)
+    {
+        return noteMiss(id);
+    }
+    uint8_t b0 = Wire.read();
+    uint8_t b1 = Wire.read();
+    // A badge that had not finished, or never saw this token, still holds the
+    // previous frame - keep the last good state rather than trust it.
+    if (b1 != scanSeq)
+    {
+        return noteMiss(id);
+    }
+    return noteFrame(id, b0);
 }
 
 void masterBegin()
 {
-    Wire.begin();
+    busBegin();
     // Left at the default 100 kHz on purpose. With 12 badges and the
     // cabling between them, bus capacitance is close to the 400 pF limit and
     // 400 kHz will not make the edges.
 
-    for (uint8_t id = 1; id < MAX_BADGES; id++)
-    {
-        slavePresent[id] = probe(id);
-        Serial.print("Fret ");
-        Serial.print(id);
-        Serial.println(slavePresent[id] ? ": present" : ": absent");
-    }
+    // Fret badges never measure unprompted, so the master can time its own
+    // scan now to size the first windows.
+    ownScanMaxUs = touchUpdate();
 
     Serial.println("Master ready");
 }
 
-// Reads every present slave's pad mask. An absent badge NACKs its address and
-// requestFrom returns immediately, so a missing fret costs a few hundred
-// microseconds rather than stalling the strum.
-static void pollSlaves()
+// The badge's effective pads: a capo holds every string at its fret.
+static uint8_t fretPads(uint8_t id)
 {
-    for (uint8_t id = 1; id < MAX_BADGES; id++)
+    const FretLink &f = frets[id];
+    if (!f.fresh)
     {
-        if (!slavePresent[id])
-        {
-            continue;
-        }
-
-        if (Wire.requestFrom(wireAddress(id), (uint8_t)1) != 1)
-        {
-            slavePresent[id] = false;
-            slavePads[id] = 0;
-            continue;
-        }
-        slavePads[id] = Wire.read();
+        return 0;
     }
+    return f.capo ? FRAME_PAD_BITS : f.pads;
 }
 
 // Highest fret wins, which is how a real fretboard behaves: the string only
@@ -115,12 +274,12 @@ static void pollSlaves()
 static void resolveFrets()
 {
     // Collapse each badge's raw pads into string bits once, rather than per
-    // string. On a ukulele the grouping runs the whole length of the neck, so
-    // pads 5 and 6 on any fret badge both mean "the A string".
+    // string. On a ukulele the grouping runs the whole length of the neck, and
+    // the pads it leaves out of every group (2 and 5) are ignored right here.
     uint8_t grouped[MAX_BADGES];
     for (uint8_t id = 1; id < MAX_BADGES; id++)
     {
-        grouped[id] = slavePresent[id] ? groupPads(inst, slavePads[id]) : 0;
+        grouped[id] = groupPads(inst, fretPads(id));
     }
 
     for (uint8_t s = 0; s < inst->stringCount; s++)
@@ -164,7 +323,7 @@ static void setStringFreq(uint8_t s, uint16_t freq)
                 digitalWrite(BUZZER_PIN, LOW);
             }
         }
-        else if (slavePresent[id])
+        else if (frets[id].fresh)
         {
             writeFreq(id, freq);
         }
@@ -223,7 +382,7 @@ static void updateSustain()
 #if PITCH_TRACKS_FRETS
         // Retune a note that is still ringing, which is what makes hammer-ons
         // and slides work. setStringFreq() is a no-op when nothing moved, so
-        // this does not put traffic on the bus every poll.
+        // this does not put traffic on the bus every cycle.
         setStringFreq(s, freqForFret(inst, s, fretForString[s]));
 #endif
     }
@@ -242,10 +401,8 @@ void masterToggleUkulele()
 
     inst = (inst == &kGuitar) ? &kUkulele : &kGuitar;
 
-    // Tell the neck before anything else. Every fret badge has to change which
-    // pads it reads and how it lights its slider, and until it hears this it is
-    // still reporting under the old instrument.
-    broadcastMode();
+    // The fret badges hear about it with their next token, since every
+    // CMD_SCAN carries the instrument.
 
     uint32_t now = millis();
     uint8_t strings = groupPads(inst, touchMask());
@@ -283,50 +440,83 @@ static void renderLeds(bool sounding)
     }
 }
 
-// Retries one absent ID at a time so a neck that is missing several badges does
-// not spend a long blocking scan between polls.
-static void probeAbsent()
-{
-    for (uint8_t attempt = 0; attempt < MAX_BADGES; attempt++)
-    {
-        uint8_t id = probeCursor;
-        probeCursor++;
-        if (probeCursor >= MAX_BADGES)
-        {
-            probeCursor = 1;
-        }
-
-        if (slavePresent[id])
-        {
-            continue;
-        }
-
-        if (probe(id))
-        {
-            slavePresent[id] = true;
-            // Bring the newcomer in step: instrument first, since it decides
-            // what the badge reads, then whatever its string is doing.
-            writeMode(id);
-            writeFreq(id, stringFreq[stringIndexForBadge(inst, id)]);
-            Serial.print("Fret ");
-            Serial.print(id);
-            Serial.println(" joined");
-        }
-        return;
-    }
-}
-
-void masterLoop()
+static void logStats()
 {
     uint32_t now = millis();
-    if (now - lastPollMs < POLL_INTERVAL_MS)
+    if (now - lastStatsMs < LOG_STATS_MS)
     {
         return;
     }
-    lastPollMs = now;
+    lastStatsMs = now;
 
-    touchUpdate();
-    pollSlaves();
+#if MASTER_LOG
+    char line[96];
+    snprintf(line, sizeof(line), "cycle avg %lu us max %lu us | scan %lu us window %lu us | misses",
+             (unsigned long)(cycleCount ? cycleSumUs / cycleCount : 0), (unsigned long)cycleMaxUs,
+             (unsigned long)ownScanMaxUs, (unsigned long)scanWindowUs());
+    Serial.print(line);
+    bool any = false;
+    for (uint8_t id = 1; id < MAX_BADGES; id++)
+    {
+        if (frets[id].missesLog > 0)
+        {
+            any = true;
+            Serial.print(' ');
+            Serial.print(id);
+            Serial.print('=');
+            Serial.print(frets[id].missesLog);
+            if (!frets[id].fresh)
+            {
+                Serial.print("(stale)");
+            }
+        }
+    }
+    Serial.println(any ? "" : " none");
+#endif
+
+    for (uint8_t id = 1; id < MAX_BADGES; id++)
+    {
+        frets[id].missesLog = 0;
+    }
+    cycleSumUs = 0;
+    cycleMaxUs = 0;
+    cycleCount = 0;
+}
+
+// One full cycle: every fret badge's window in turn, then the master's own.
+// Everything that puts traffic on the bus or switches current - frequency
+// writes, LEDs, serial - happens in the master's slot, after its own pads are
+// back to driven-LOW, so none of it can land inside anyone's measurement.
+void masterLoop()
+{
+    uint32_t cycleStartUs = micros();
+
+    // A bus that is still busy between transactions has been left wedged.
+    uint32_t now = millis();
+    if (SERCOM2->I2CM.STATUS.bit.BUSSTATE == 3 && now - lastRecoverMs >= 1000)
+    {
+        lastRecoverMs = now;
+        busRecover();
+    }
+
+    scanSeq++;
+    uint8_t flags = (inst == &kUkulele) ? SCAN_FLAG_UKULELE : 0;
+    uint8_t ownBefore = touchMask();
+    bool changed = false;
+    for (uint8_t id = 1; id < MAX_BADGES; id++)
+    {
+        changed |= scanFret(id, flags);
+    }
+
+    // The master's own window. The last fret badge has already answered, so
+    // its scan is done and the neck is quiet.
+    uint32_t ownUs = touchUpdate();
+    if (ownUs > ownScanMaxUs)
+    {
+        ownScanMaxUs = ownUs;
+    }
+    changed |= touchMask() != ownBefore;
+
     resolveFrets();
     updateStrum();
     updateSustain();
@@ -342,15 +532,9 @@ void masterLoop()
     }
     renderLeds(sounding);
 
-    if (now - lastProbeMs >= PROBE_INTERVAL_MS)
+    if (changed)
     {
-        lastProbeMs = now;
-        probeAbsent();
-        // Re-assert the instrument once a second. A badge that browns out and
-        // restarts still answers polls, so the master never notices it is gone
-        // - but it comes back up in guitar mode. Without this it would sit
-        // there reading the wrong pads until the next time you toggled.
-        broadcastMode();
+        logPads();
     }
 
 #if MASTER_DEBUG
@@ -373,4 +557,13 @@ void masterLoop()
         Serial.println();
     }
 #endif
+
+    uint32_t cycleUs = micros() - cycleStartUs;
+    cycleSumUs += cycleUs;
+    cycleCount++;
+    if (cycleUs > cycleMaxUs)
+    {
+        cycleMaxUs = cycleUs;
+    }
+    logStats();
 }
