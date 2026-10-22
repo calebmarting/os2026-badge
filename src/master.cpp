@@ -2,6 +2,7 @@
 #include "badge_hw.h"
 #include "guitar_config.h"
 #include "console.h"
+#include "params.h"
 #include "scan_protocol.h"
 #include "touch.h"
 
@@ -70,11 +71,11 @@ static void setStringFreq(uint8_t s, uint16_t freq);
 // How long the bus stays silent after handing a badge the token.
 static uint32_t scanWindowUs()
 {
-#if SCAN_US > 0
-    return SCAN_US;
-#else
+    if (params.scanUs > 0)
+    {
+        return params.scanUs;
+    }
     return ownScanMaxUs + ownScanMaxUs / 4 + SCAN_MARGIN_US;
-#endif
 }
 
 // SERCOM2 is the MKR Zero's Wire port. The core's master code busy-waits on
@@ -156,6 +157,27 @@ static void generalCall(uint8_t cmd, uint8_t arg)
     Wire.write(cmd);
     Wire.write(arg);
     Wire.endTransmission();
+}
+
+static void sendParam(uint8_t addr, uint8_t index)
+{
+    uint16_t value = (uint16_t)paramGet(index);
+    Wire.beginTransmission(addr);
+    Wire.write(CMD_PARAM);
+    Wire.write(index);
+    Wire.write((uint8_t)(value & 0xFF));
+    Wire.write((uint8_t)(value >> 8));
+    Wire.endTransmission();
+}
+
+// Every param, so a badge that rebooted - back on its compiled-in defaults -
+// is brought in line with whatever was tuned at runtime before it calibrates.
+static void sendAllParams(uint8_t addr)
+{
+    for (uint8_t i = 0; i < paramCount(); i++)
+    {
+        sendParam(addr, i);
+    }
 }
 
 static void printPads(uint8_t pads)
@@ -327,6 +349,7 @@ static void calibrateAll()
     }
 
     Serial.println("Calibrating - hands off the neck");
+    sendAllParams(GENERAL_CALL_ADDR);
     generalCall(CMD_PROMPT, PROMPT_HANDS_OFF);
     uint32_t leadStartMs = millis();
     while (millis() - leadStartMs < CAL_LEAD_MS)
@@ -365,6 +388,10 @@ static void calibrateAll()
         padWasDown[s] = false;
     }
     anyTouch = false;
+
+    // The acquisition settings may have changed, so re-time the scan from
+    // scratch. Fret badges never measure unprompted, so this is safe now.
+    ownScanMaxUs = touchScan(false);
 }
 
 void masterRecalibrate()
@@ -380,11 +407,7 @@ void masterBegin()
     delay(STARTUP_MS);
     calibrateAll();
 
-    // Fret badges never measure unprompted, so the master can time its own
-    // scan now to size the first windows.
-    ownScanMaxUs = touchScan(false);
-
-    Serial.println("Master ready");
+    Serial.println("Master ready - type help for commands");
 }
 
 // The badge's effective pads: a capo holds every string at its fret.
@@ -727,6 +750,52 @@ static void printHelp()
     Serial.println("  watch N|all|off raw/baseline/delta of badge N (0 = master)");
     Serial.println("  cal             recalibrate the whole neck (hands off)");
     Serial.println("  info            which badges are present");
+    Serial.println("  params          every tunable and its current value");
+    Serial.println("  set NAME VALUE  change one on every badge, until power-off");
+}
+
+static void printParams()
+{
+    for (uint8_t i = 0; i < paramCount(); i++)
+    {
+        const ParamInfo &p = paramInfo(i);
+        char line[64];
+        snprintf(line, sizeof(line), "  %-10s %6d   (%d..%d%s)", p.name, paramGet(i), p.min, p.max,
+                 p.needsRecal ? ", recalibrates" : "");
+        Serial.println(line);
+    }
+}
+
+static void setParam(char *arg)
+{
+    char *value = strchr(arg, ' ');
+    if (!value)
+    {
+        Serial.println("usage: set NAME VALUE (see params)");
+        return;
+    }
+    *value++ = '\0';
+    int8_t index = paramFind(arg);
+    if (index < 0)
+    {
+        Serial.println("no such param (see params)");
+        return;
+    }
+    if (!paramSet(index, (int16_t)strtol(value, nullptr, 10)))
+    {
+        Serial.println("out of range (see params)");
+        return;
+    }
+
+    sendParam(GENERAL_CALL_ADDR, index);
+    Serial.print(paramInfo(index).name);
+    Serial.print(" = ");
+    Serial.println(paramGet(index));
+    if (paramInfo(index).needsRecal)
+    {
+        paramsApplyAcquisition(0);
+        calibrateAll();
+    }
 }
 
 static bool onOff(const char *arg, bool current)
@@ -804,6 +873,14 @@ static void handleCommand(char *line)
     else if (strcmp(line, "info") == 0)
     {
         printInfo();
+    }
+    else if (strcmp(line, "params") == 0)
+    {
+        printParams();
+    }
+    else if (strcmp(line, "set") == 0)
+    {
+        setParam(arg);
     }
     else
     {
@@ -900,6 +977,7 @@ void masterLoop()
     {
         if (frets[id].fresh && !frets[id].calibrated && millis() - frets[id].lastCalMs >= CAL_RETRY_MS)
         {
+            sendAllParams(wireAddress(id));
             calibrateFret(id);
             break;
         }

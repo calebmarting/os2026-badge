@@ -7,8 +7,9 @@
 
 const uint8_t sliderLedPins[NUM_SLIDER_LEDS] = {1, 0, 3, 2, 4};
 
-// Pad 4 sits on ADC_BATTERY rather than a normal Ax pin. RESISTOR_50K gives a
-// larger swing on touch than the 100K the Bop It game used.
+// Pad 4 sits on ADC_BATTERY rather than a normal Ax pin. The acquisition
+// settings here are placeholders: padsConfigure() replaces them from the
+// params before anything is measured.
 static Adafruit_FreeTouch qt_1 = Adafruit_FreeTouch(A1, OVERSAMPLE_4, RESISTOR_50K, FREQ_MODE_NONE);
 static Adafruit_FreeTouch qt_2 = Adafruit_FreeTouch(A2, OVERSAMPLE_4, RESISTOR_50K, FREQ_MODE_NONE);
 static Adafruit_FreeTouch qt_3 = Adafruit_FreeTouch(A3, OVERSAMPLE_4, RESISTOR_50K, FREQ_MODE_NONE);
@@ -107,6 +108,16 @@ void padsCalibrateCompCap()
 uint16_t padCompCap(uint8_t pad)
 {
     return touchCompCap[pad];
+}
+
+void padsConfigure(uint8_t oversample, uint8_t resistor, uint8_t freqMode, uint8_t hop)
+{
+    for (uint8_t i = 0; i < NUM_TOUCH_PADS; i++)
+    {
+        touchPads[i]->setOversampling((oversample_t)oversample);
+        touchPads[i]->setSeriesResistor((series_resistor_t)resistor);
+        touchPads[i]->setFreqHopping((freq_mode_t)freqMode, (freq_hop_t)hop);
+    }
 }
 
 uint32_t padsScan(uint16_t raw[NUM_TOUCH_PADS])

@@ -36,6 +36,7 @@ void adafruit_ptc_get_config_default(struct adafruit_ptc_config *config) {
   config->oversample = OVERSAMPLE_4;
   config->seriesres = RESISTOR_0;
   config->freqhop = FREQ_MODE_NONE;
+  config->hops = FREQ_HOP_1; // LOCAL FORK: upstream leaves this uninitialised
   config->compcap = 0x2000;
   config->intcap = 0x3F;
 }

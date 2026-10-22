@@ -34,6 +34,10 @@ uint32_t padsScan(uint16_t raw[NUM_TOUCH_PADS]);
 // near TOUCH_CAL_TARGET. Measures continuously, so it needs the token too.
 void padsCalibrateCompCap();
 uint16_t padCompCap(uint8_t pad);
+// Acquisition settings for every pad, as FreeTouch enum values (see the PTC_*
+// defaults in guitar_config.h). They are read at the start of each
+// conversion, so they apply from the next measurement.
+void padsConfigure(uint8_t oversample, uint8_t resistor, uint8_t freqMode, uint8_t hop);
 
 void buttonUpdate();
 bool buttonIsDown();

@@ -14,6 +14,7 @@
 #include "badge_hw.h"
 #include "guitar_config.h"
 #include "master.h"
+#include "params.h"
 #include "slave.h"
 #include "touch_diag.h"
 
@@ -30,6 +31,7 @@ void setup()
 #endif
 
     badgeId = loadBadgeId();
+    paramsApplyAcquisition(badgeId);
 
     if (badgeId == 0)
     {

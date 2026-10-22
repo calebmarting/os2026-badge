@@ -14,7 +14,11 @@ public:
   uint16_t measure(void);
   uint16_t measureRaw(void);
 
-  // LOCAL FORK. These four were private upstream; they are the only change.
+  // LOCAL FORK. Two changes from upstream 1.1.3, vendored here so the global
+  // library install is untouched (platformio.ini deliberately does not list
+  // the upstream package - two copies of adafruit_ptc.c collide at link time):
+  //  1. These setters were private upstream.
+  //  2. adafruit_ptc_get_config_default() now initialises config.hops.
   //
   // Every badge pad idles at 400-680 out of a ~1016 full scale, so parasitic
   // capacitance eats 40-67% of the range before a finger is anywhere near the
@@ -23,10 +27,10 @@ public:
   // is the register that cancels that standing offset, so it has to be
   // reachable to calibrate each pad down to a usable starting point.
   //
-  // setFreqHopping() also matters: adafruit_ptc_get_config_default() never
-  // initialises config.hops, which becomes SAMPLEDELAY whenever freqhop is not
-  // FREQ_MODE_NONE. Calling this explicitly is the only way to use spread
-  // spectrum without an uninitialised sample delay.
+  // setFreqHopping() also matters: config.hops becomes SAMPLEDELAY whenever
+  // freqhop is not FREQ_MODE_NONE, and upstream never initialised it. The
+  // guitar firmware sets it explicitly per badge (padsConfigure()), and the
+  // default is now FREQ_HOP_1 in case anything else does not.
   void setOversampling(oversample_t lvl);
   void setSeriesResistor(series_resistor_t res);
   void setFreqHopping(freq_mode_t fh, freq_hop_t hops = FREQ_HOP_1);

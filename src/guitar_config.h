@@ -39,6 +39,22 @@
 // captured under a finger. 0 = never.
 #define TOUCH_MAX_ON_SECONDS 30
 
+// PTC acquisition, as Adafruit_FreeTouch enum values.
+// Oversampling: 2 = 4x, 3 = 8x, 4 = 16x, 5 = 32x. FreeTouch divides it back
+// out, so counts - and every threshold above - keep the same scale; more just
+// means less noise and a proportionally longer scan window.
+#define PTC_OVERSAMPLE 4
+// Series resistor: 0 = none, 1 = 20K, 2 = 50K, 3 = 100K.
+#define PTC_RESISTOR 2
+// 0 = fixed frequency. Any other value turns on the PTC's spread spectrum
+// with PTC_FREQ_HOP as its sample delay (0..15) - the library treats HOP,
+// SPREAD and SPREAD_MEDIAN identically. Each badge adds PTC_HOP_PER_BADGE x
+// its ID to the delay, so neighbours can be made to sample on different
+// cadences; 0 gives every badge the same one.
+#define PTC_FREQ_MODE 2
+#define PTC_FREQ_HOP 0
+#define PTC_HOP_PER_BADGE 0
+
 // Samples averaged per pad during calibration.
 #define TOUCH_CAL_SAMPLES 32
 // Where per-pad COMPCAP calibration aims to park each idle reading. Full scale

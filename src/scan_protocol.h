@@ -27,6 +27,9 @@ enum : uint8_t
     CMD_CAL = 0x53,
     // [mode] general call - the calibration prompt, one of PROMPT_*.
     CMD_PROMPT = 0x54,
+    // [index, lo, hi] general call or addressed - set one runtime param
+    // (params.h) to a signed 16-bit value, little-endian.
+    CMD_PARAM = 0x55,
     // [] - the next read returns this badge's debug block instead of a frame.
     CMD_DEBUG = 0x56,
 };

@@ -3,10 +3,12 @@
 #include "guitar_config.h"
 #include "scan_protocol.h"
 #include "console.h"
+#include "params.h"
 #include "touch.h"
 
 #include <Wire.h>
 
+static uint8_t myId = 0;
 static uint8_t myAddress = 0;
 
 // Set by the I2C receive ISR, consumed by loop(). Measuring inside the ISR
@@ -17,6 +19,15 @@ static volatile uint8_t scanSeq = 0;
 static volatile bool calPending = false;
 static volatile uint8_t calSeq = 0;
 static volatile uint8_t promptMode = PROMPT_OFF;
+
+// Param writes land here from the ISR and are applied in loop(), so a setting
+// can never change halfway through a scan. A burst - a badge rejoining gets
+// every param at once - fits comfortably.
+#define PARAM_QUEUE 32
+static volatile uint8_t paramIndex[PARAM_QUEUE];
+static volatile int16_t paramValue[PARAM_QUEUE];
+static volatile uint8_t paramHead = 0;
+static volatile uint8_t paramTail = 0;
 
 // Built in loop() after a scan, read from the I2C request ISR. Rebuilt with
 // interrupts off so a read can never see half an old frame and half a new one.
@@ -85,6 +96,19 @@ static void onReceive(int count)
         {
             debugNext = true;
         }
+        else if (cmd == CMD_PARAM && count >= 4)
+        {
+            uint8_t index = Wire.read();
+            uint8_t lo = Wire.read();
+            uint8_t hi = Wire.read();
+            uint8_t next = (paramHead + 1) % PARAM_QUEUE;
+            if (next != paramTail)
+            {
+                paramIndex[paramHead] = index;
+                paramValue[paramHead] = (int16_t)((uint16_t)lo | ((uint16_t)hi << 8));
+                paramHead = next;
+            }
+        }
     }
 
     while (Wire.available())
@@ -101,6 +125,7 @@ void slaveToggleCapo()
 
 void slaveBegin(uint8_t id)
 {
+    myId = id;
     myAddress = wireAddress(id);
     // General call on, for the commands every badge hears at once.
     Wire.begin(myAddress, true);
@@ -217,6 +242,23 @@ void slaveLoop()
     if (consoleReadLine(line, sizeof(line)))
     {
         handleCommand(line);
+    }
+
+    bool acquisitionChanged = false;
+    while (paramTail != paramHead)
+    {
+        uint8_t index = paramIndex[paramTail];
+        int16_t value = paramValue[paramTail];
+        paramTail = (paramTail + 1) % PARAM_QUEUE;
+        if (index < paramCount() && paramGet(index) != value && paramSet(index, value))
+        {
+            acquisitionChanged |= paramInfo(index).needsRecal;
+        }
+    }
+    if (acquisitionChanged)
+    {
+        // The master follows an acquisition change with a recalibration.
+        paramsApplyAcquisition(myId);
     }
 
     if (calPending)
