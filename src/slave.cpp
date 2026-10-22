@@ -3,6 +3,7 @@
 #include "guitar_config.h"
 #include "scan_protocol.h"
 #include "console.h"
+#include "ota.h"
 #include "params.h"
 #include "touch.h"
 
@@ -58,6 +59,9 @@ static void onRequest()
         debugNext = false;
         Wire.write((const uint8_t *)debugBlock, DEBUG_LEN);
     }
+    else if (otaSlaveRequest())
+    {
+    }
     else
     {
         Wire.write((const uint8_t *)frame, FRAME_LEN);
@@ -70,7 +74,10 @@ static void onReceive(int count)
     if (count >= 1)
     {
         uint8_t cmd = Wire.read();
-        if (cmd == CMD_SCAN && count >= 3)
+        if (otaSlaveReceive(cmd, count))
+        {
+        }
+        else if (cmd == CMD_SCAN && count >= 3)
         {
             scanFlags = Wire.read();
             scanSeq = Wire.read();
@@ -128,6 +135,7 @@ void slaveBegin(uint8_t id)
     myId = id;
     myAddress = wireAddress(id);
     // General call on, for the commands every badge hears at once.
+    otaSlaveBegin(myAddress);
     Wire.begin(myAddress, true);
     Wire.onRequest(onRequest);
     Wire.onReceive(onReceive);
@@ -242,6 +250,12 @@ void slaveLoop()
     if (consoleReadLine(line, sizeof(line)))
     {
         handleCommand(line);
+    }
+
+    // An update owns the badge until it installs or is aborted.
+    if (otaSlaveLoop())
+    {
+        return;
     }
 
     bool acquisitionChanged = false;

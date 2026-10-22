@@ -32,6 +32,18 @@ enum : uint8_t
     CMD_PARAM = 0x55,
     // [] - the next read returns this badge's debug block instead of a frame.
     CMD_DEBUG = 0x56,
+
+    // Firmware update, see ota.h.
+    // [size u32, crc32 u32] general call - stop playing, erase staging.
+    CMD_OTA_BEGIN = 0x60,
+    // [page u16, 64 bytes, crc8] general call, or addressed for a repair.
+    CMD_OTA_DATA = 0x61,
+    // [] - the next read returns the OTA status block.
+    CMD_OTA_STATUS = 0x62,
+    // [crc32 u32] - install the verified staged image and reboot into it.
+    CMD_OTA_COMMIT = 0x63,
+    // [] general call or addressed - forget the update, resume playing.
+    CMD_OTA_ABORT = 0x64,
 };
 
 #define PROMPT_OFF 0

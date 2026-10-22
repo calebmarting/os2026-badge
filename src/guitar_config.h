@@ -81,6 +81,13 @@
 // numbers for any badge without moving the cable.
 #define TOUCH_DEBUG 0
 #define TOUCH_DEBUG_MS 100
+
+// Firmware update over I2C (ota.h). The row times are deliberately pessimistic
+// - the SAMD21 erases a row in a few ms and programs a page in ~2.5 ms.
+#define OTA_HOST_TIMEOUT_MS 5000
+#define OTA_ROW_ERASE_MS 8
+#define OTA_ROW_INSTALL_MS 20
+#define OTA_BADGE_TIMEOUT_MS 30000
 // ---------------------------------------------------------------------------
 
 // The largest string count of any instrument, so it also sizes the master's

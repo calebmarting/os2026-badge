@@ -1,28 +1,44 @@
 #include "badge_config.h"
 #include "badge_hw.h"
 #include "guitar_config.h"
+#include "nvm.h"
 
-#include <FlashStorage.h>
 #include <Wire.h>
 
-// The `valid` flag matters because erased flash reads back as all 0xFF, which
-// would otherwise look like a badge configured to ID 255.
+// Stored in the last flash row, outside the firmware image (see nvm.h). The
+// old FlashStorage copy lived inside the image, so every upload of any kind
+// reset the badge to ID 0; this one survives an I2C update.
+//
+// The magic and the inverted copy matter because erased flash reads back as
+// all 0xFF, which would otherwise look like a badge configured to ID 255.
 struct BadgeConfig
 {
-    bool valid;
+    uint32_t magic;
     uint8_t id;
+    uint8_t idInverted;
 };
 
-FlashStorage(badge_config_store, BadgeConfig);
+#define BADGE_CONFIG_MAGIC 0x31525447UL // "GTR1"
 
 uint8_t loadBadgeId()
 {
-    BadgeConfig config = badge_config_store.read();
-    if (!config.valid || config.id >= MAX_BADGES)
+    BadgeConfig config;
+    memcpy(&config, (const void *)CONFIG_ROW, sizeof(config));
+    if (config.magic != BADGE_CONFIG_MAGIC || config.idInverted != (uint8_t)~config.id || config.id >= MAX_BADGES)
     {
         return 0;
     }
     return config.id;
+}
+
+static void saveBadgeId(uint8_t id)
+{
+    uint8_t page[NVM_PAGE_SIZE];
+    memset(page, 0xFF, sizeof(page));
+    BadgeConfig config = {BADGE_CONFIG_MAGIC, id, (uint8_t)~id};
+    memcpy(page, &config, sizeof(config));
+    nvmEraseRow(CONFIG_ROW);
+    nvmWritePage(CONFIG_ROW, page);
 }
 
 static void blinkSaved()
@@ -84,8 +100,7 @@ void runSetupMode(uint8_t id)
 
     if (saved)
     {
-        BadgeConfig config = {true, id};
-        badge_config_store.write(config);
+        saveBadgeId(id);
         blinkSaved();
     }
 

@@ -14,6 +14,7 @@
 #include "badge_hw.h"
 #include "guitar_config.h"
 #include "master.h"
+#include "nvm.h"
 #include "params.h"
 #include "slave.h"
 #include "touch_diag.h"
@@ -32,6 +33,18 @@ void setup()
 
     badgeId = loadBadgeId();
     paramsApplyAcquisition(badgeId);
+
+    Serial.print("Firmware ");
+    Serial.print(runningImageCrc(), HEX);
+    Serial.print(", ");
+    Serial.print(runningImageSize());
+    Serial.println(" bytes");
+    if (runningImageSize() > APP_MAX_SIZE)
+    {
+        // It would overlap the staging area, so an I2C update would overwrite
+        // the very code doing it.
+        Serial.println("WARNING: firmware too large for I2C updates");
+    }
 
     if (badgeId == 0)
     {

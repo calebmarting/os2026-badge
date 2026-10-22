@@ -2,6 +2,8 @@
 #include "badge_hw.h"
 #include "guitar_config.h"
 #include "console.h"
+#include "nvm.h"
+#include "ota.h"
 #include "params.h"
 #include "scan_protocol.h"
 #include "touch.h"
@@ -156,6 +158,13 @@ static void generalCall(uint8_t cmd, uint8_t arg)
     Wire.beginTransmission(GENERAL_CALL_ADDR);
     Wire.write(cmd);
     Wire.write(arg);
+    Wire.endTransmission();
+}
+
+static void sendCommand0(uint8_t cmd)
+{
+    Wire.beginTransmission(GENERAL_CALL_ADDR);
+    Wire.write(cmd);
     Wire.endTransmission();
 }
 
@@ -405,6 +414,8 @@ void masterBegin()
     // The fret badges power up with the master and need a moment before they
     // are listening.
     delay(STARTUP_MS);
+    // Frees any badge left waiting in an update that never finished.
+    sendCommand0(CMD_OTA_ABORT);
     calibrateAll();
 
     Serial.println("Master ready - type help for commands");
@@ -731,13 +742,24 @@ static void printInfo()
     Serial.print("us, master cal ");
     Serial.print(ownCalUs / 1000);
     Serial.println("ms");
+    char line[96];
+    snprintf(line, sizeof(line), "  master          firmware %08lX (%lu bytes)",
+             (unsigned long)runningImageCrc(), (unsigned long)runningImageSize());
+    Serial.println(line);
     for (uint8_t id = 1; id < MAX_BADGES; id++)
     {
         const FretLink &f = frets[id];
-        char line[80];
-        snprintf(line, sizeof(line), "  fret %2u  I2C 0x%02X  %s%s%s",
+        uint32_t crc = 0;
+        bool haveCrc = f.fresh && otaQueryRunningCrc(id, crc);
+        char fw[24] = "";
+        if (haveCrc)
+        {
+            snprintf(fw, sizeof(fw), "  firmware %08lX", (unsigned long)crc);
+        }
+        snprintf(line, sizeof(line), "  fret %2u  I2C 0x%02X  %s%s%s%s%s",
                  (unsigned)id, (unsigned)wireAddress(id), f.fresh ? "present" : "stale",
-                 f.fresh && !f.calibrated ? ", uncalibrated" : "", f.capo ? ", capo" : "");
+                 f.fresh && !f.calibrated ? ", uncalibrated" : "", f.capo ? ", capo" : "", fw,
+                 haveCrc && crc != runningImageCrc() ? "  <- differs from master" : "");
         Serial.println(line);
     }
 }
@@ -752,6 +774,22 @@ static void printHelp()
     Serial.println("  info            which badges are present");
     Serial.println("  params          every tunable and its current value");
     Serial.println("  set NAME VALUE  change one on every badge, until power-off");
+    Serial.println("  ota SIZE CRC    firmware update - use tools/ota_upload.py");
+}
+
+// The host tool has already sent "ota SIZE CRC"; the image follows on Serial.
+static void runUpdate(char *arg)
+{
+    char *end = nullptr;
+    uint32_t size = strtoul(arg, &end, 10);
+    uint32_t crc = strtoul(end, nullptr, 10);
+    for (uint8_t s = 0; s < inst->stringCount; s++)
+    {
+        setStringFreq(s, 0);
+    }
+    setSliderLeds(0);
+    otaMasterRun(size, crc); // only returns on failure
+    Serial.println("Update abandoned, still playing the old firmware");
 }
 
 static void printParams()
@@ -881,6 +919,10 @@ static void handleCommand(char *line)
     else if (strcmp(line, "set") == 0)
     {
         setParam(arg);
+    }
+    else if (strcmp(line, "ota") == 0)
+    {
+        runUpdate(arg);
     }
     else
     {
