@@ -13,3 +13,7 @@ void masterLoop();
 // Switches between guitar and ukulele. Silences the whole neck on the way
 // through, since the badge->string mapping changes with the instrument.
 void masterToggleUkulele();
+
+// Blinks "hands off" on every badge, then calibrates each one in turn. Runs at
+// boot, and on demand from a double tap of the master's button.
+void masterRecalibrate();

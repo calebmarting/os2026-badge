@@ -2,6 +2,7 @@
 #include "badge_hw.h"
 #include "guitar_config.h"
 #include "scan_protocol.h"
+#include "touch.h"
 
 #include <Wire.h>
 
@@ -16,6 +17,10 @@ struct FretLink
     // or missing frame leaves this alone, so one glitch cannot drop a fret.
     uint8_t pads;
     bool capo;
+    // The badge says it has a baseline. A fresh badge without one gets a
+    // CMD_CAL in the master's next slot.
+    bool calibrated;
+    uint32_t lastCalMs;
     // Answered within the last STALE_SCANS tokens. A stale badge reads as
     // nothing held, so a dead fret can never pin a note on.
     bool fresh;
@@ -31,6 +36,13 @@ static uint8_t scanSeq = 0;
 // long a fret badge needs - and it follows any change to the acquisition
 // settings without anyone re-measuring.
 static uint32_t ownScanMaxUs = 0;
+// How long the master's own calibration took. Same reasoning: it sizes the
+// exclusive window each fret badge gets for its calibration.
+static uint32_t ownCalUs = 0;
+
+// Anything on the neck read as held last cycle. Rides out with every token so
+// no badge drifts its baseline while a hand is anywhere on the instrument.
+static bool anyTouch = false;
 
 static uint8_t fretForString[NUM_STRINGS];
 static uint16_t stringFreq[NUM_STRINGS]; // currently sounding, 0 = silent
@@ -45,6 +57,8 @@ static uint32_t cycleMaxUs = 0;
 static uint32_t cycleCount = 0;
 static uint32_t lastStatsMs = 0;
 static uint32_t lastRecoverMs = 0;
+
+static void setStringFreq(uint8_t s, uint16_t freq);
 
 // How long the bus stays silent after handing a badge the token.
 static uint32_t scanWindowUs()
@@ -124,6 +138,14 @@ static void writeFreq(uint8_t id, uint16_t freq)
     Wire.endTransmission();
 }
 
+static void generalCall(uint8_t cmd, uint8_t arg)
+{
+    Wire.beginTransmission(GENERAL_CALL_ADDR);
+    Wire.write(cmd);
+    Wire.write(arg);
+    Wire.endTransmission();
+}
+
 static void printPads(uint8_t pads)
 {
     for (uint8_t i = 0; i < NUM_PADS; i++)
@@ -192,6 +214,7 @@ static bool noteFrame(uint8_t id, uint8_t b0)
     f.misses = 0;
     f.pads = pads;
     f.capo = capo;
+    f.calibrated = (b0 & FRAME_STATUS_CALIBRATED) != 0;
 
     if (!f.fresh)
     {
@@ -244,6 +267,96 @@ static bool scanFret(uint8_t id, uint8_t flags)
     return noteFrame(id, b0);
 }
 
+// A long exclusive token. The badge gets as long as the master's own
+// calibration took plus margin, then must answer with a calibrated frame.
+static bool calibrateFret(uint8_t id)
+{
+    uint8_t addr = wireAddress(id);
+    scanSeq++;
+
+    Wire.beginTransmission(addr);
+    Wire.write(CMD_CAL);
+    Wire.write(scanSeq);
+    if (Wire.endTransmission() != 0)
+    {
+        return false;
+    }
+
+    uint32_t sentUs = micros();
+    uint32_t waitUs = ownCalUs + ownCalUs / 4 + (uint32_t)CAL_MARGIN_MS * 1000;
+    while (micros() - sentUs < waitUs)
+    {
+    }
+
+    bool ok = Wire.requestFrom(addr, (uint8_t)FRAME_LEN) == FRAME_LEN;
+    uint8_t b0 = ok ? Wire.read() : 0;
+    uint8_t b1 = ok ? Wire.read() : 0;
+    ok = ok && b1 == scanSeq && (b0 & FRAME_STATUS_CALIBRATED);
+    frets[id].calibrated = ok;
+    frets[id].lastCalMs = millis();
+
+    Serial.print("Fret ");
+    Serial.print(id);
+    Serial.println(ok ? " calibrated" : " calibration failed");
+    return ok;
+}
+
+// The whole neck, one badge at a time: hands-off blink first so the player
+// can lift off, then solid while each badge calibrates in its own turn. Every
+// note is silenced first so no piezo is toggling under a baseline.
+static void calibrateAll()
+{
+    for (uint8_t s = 0; s < inst->stringCount; s++)
+    {
+        setStringFreq(s, 0);
+    }
+
+    Serial.println("Calibrating - hands off the neck");
+    generalCall(CMD_PROMPT, PROMPT_HANDS_OFF);
+    uint32_t leadStartMs = millis();
+    while (millis() - leadStartMs < CAL_LEAD_MS)
+    {
+        updatePromptLeds(PROMPT_HANDS_OFF);
+    }
+
+    generalCall(CMD_PROMPT, PROMPT_CALIBRATING);
+    updatePromptLeds(PROMPT_CALIBRATING);
+
+    ownCalUs = touchCalibrate();
+    Serial.print("Master calibrated in ");
+    Serial.print(ownCalUs);
+    Serial.println("us");
+    for (uint8_t i = 0; i < NUM_PADS; i++)
+    {
+        Serial.print("  pad ");
+        Serial.print(i + 1);
+        Serial.print(" compcap ");
+        Serial.print(padCompCap(i));
+        Serial.print(" baseline ");
+        Serial.println(touchBaseline(i));
+    }
+
+    for (uint8_t id = 1; id < MAX_BADGES; id++)
+    {
+        calibrateFret(id);
+    }
+
+    generalCall(CMD_PROMPT, PROMPT_OFF);
+    updatePromptLeds(PROMPT_OFF);
+
+    // Whatever was held going in is gone now; do not let it read as a strum.
+    for (uint8_t s = 0; s < NUM_STRINGS; s++)
+    {
+        padWasDown[s] = false;
+    }
+    anyTouch = false;
+}
+
+void masterRecalibrate()
+{
+    calibrateAll();
+}
+
 void masterBegin()
 {
     busBegin();
@@ -251,9 +364,14 @@ void masterBegin()
     // cabling between them, bus capacitance is close to the 400 pF limit and
     // 400 kHz will not make the edges.
 
+    // The fret badges power up with the master and need a moment before they
+    // are listening.
+    delay(STARTUP_MS);
+    calibrateAll();
+
     // Fret badges never measure unprompted, so the master can time its own
     // scan now to size the first windows.
-    ownScanMaxUs = touchUpdate();
+    ownScanMaxUs = touchScan(false);
 
     Serial.println("Master ready");
 }
@@ -501,6 +619,10 @@ void masterLoop()
 
     scanSeq++;
     uint8_t flags = (inst == &kUkulele) ? SCAN_FLAG_UKULELE : 0;
+    if (anyTouch)
+    {
+        flags |= SCAN_FLAG_ANY_TOUCH;
+    }
     uint8_t ownBefore = touchMask();
     bool changed = false;
     for (uint8_t id = 1; id < MAX_BADGES; id++)
@@ -510,12 +632,29 @@ void masterLoop()
 
     // The master's own window. The last fret badge has already answered, so
     // its scan is done and the neck is quiet.
-    uint32_t ownUs = touchUpdate();
+    uint32_t ownUs = touchScan(!anyTouch);
     if (ownUs > ownScanMaxUs)
     {
         ownScanMaxUs = ownUs;
     }
     changed |= touchMask() != ownBefore;
+
+#if TOUCH_DEBUG
+    static uint32_t lastDebugMs = 0;
+    if (now - lastDebugMs >= TOUCH_DEBUG_MS)
+    {
+        lastDebugMs = now;
+        touchPrintDebug(ownUs);
+    }
+#endif
+
+    // Measured pads only: a capo is a clamp, not a hand, and must not freeze
+    // every baseline on the neck for as long as it is on.
+    anyTouch = touchMask() != 0;
+    for (uint8_t id = 1; id < MAX_BADGES; id++)
+    {
+        anyTouch |= frets[id].fresh && frets[id].pads != 0;
+    }
 
     resolveFrets();
     updateStrum();
@@ -535,6 +674,18 @@ void masterLoop()
     if (changed)
     {
         logPads();
+    }
+
+    // A badge that answers without a baseline has just booted - a brown-out,
+    // or a late arrival. Calibrate it in the master's slot, one per cycle, and
+    // back off a badge that keeps failing so it cannot stall the instrument.
+    for (uint8_t id = 1; id < MAX_BADGES; id++)
+    {
+        if (frets[id].fresh && !frets[id].calibrated && millis() - frets[id].lastCalMs >= CAL_RETRY_MS)
+        {
+            calibrateFret(id);
+            break;
+        }
     }
 
 #if MASTER_DEBUG

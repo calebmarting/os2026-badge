@@ -51,16 +51,32 @@ void loop()
 
     // A long press enters setup mode above and never comes back, so a release
     // reaching here is always a short press.
-    if (buttonTakeRelease())
+    bool tapped = buttonTakeRelease();
+    if (badgeId == 0)
     {
-        if (badgeId == 0)
+        // One tap toggles the ukulele, two quick taps recalibrate the neck. The
+        // toggle has to wait out the double-tap window to know which it was.
+        static bool tapPending = false;
+        static uint32_t tapMs = 0;
+        if (tapped && tapPending && millis() - tapMs <= DOUBLE_TAP_MS)
         {
+            tapPending = false;
+            masterRecalibrate();
+        }
+        else if (tapped)
+        {
+            tapPending = true;
+            tapMs = millis();
+        }
+        else if (tapPending && millis() - tapMs > DOUBLE_TAP_MS)
+        {
+            tapPending = false;
             masterToggleUkulele();
         }
-        else
-        {
-            slaveToggleCapo();
-        }
+    }
+    else if (tapped)
+    {
+        slaveToggleCapo();
     }
 
     if (badgeId == 0)

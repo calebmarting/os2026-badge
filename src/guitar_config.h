@@ -3,6 +3,68 @@
 
 #include <Arduino.h>
 
+// ---- Touch tuning ----------------------------------------------------------
+// The detection constants, all in FreeTouch counts relative to a pad's
+// baseline. These are the boot defaults for the Params struct (params.h).
+//
+// The measured window, from one badge before time-division scanning: idle
+// noise is +/-1 count, pressing one pad puts up to +30 of crosstalk on its
+// neighbour, and a real touch can be as weak as +36 when three pads are held
+// and share the charge. Re-measure with the debug output before nudging these.
+//
+// Turn on above TOUCH_ON_THRESHOLD, turn off again below TOUCH_OFF_THRESHOLD.
+// OFF sits just under ON rather than at half of it: a released pad next to a
+// held one still carries up to +30 of crosstalk, and an OFF line below that
+// would leave it stuck on.
+#define TOUCH_ON_THRESHOLD 35
+#define TOUCH_OFF_THRESHOLD 30
+
+// A pad bridged to a held neighbour by one finger drains through it and swings
+// *below* its baseline - pad 3 reaches -56 to -110 while pad 4 reads positive.
+// The same negative swing with no held neighbour means the baseline is wrong.
+#define TOUCH_NEG_THRESHOLD 40
+// 0 = a negative is never a touch.
+// 1 = a negative is a touch only while an adjacent pad reads positive; with no
+//     such neighbour, TOUCH_NEG_RECAL_SCANS in a row re-baselines the pad.
+// 2 = a negative is always a touch and never re-baselines (the old rule).
+#define TOUCH_NEG_MODE 1
+#define TOUCH_NEG_RECAL_SCANS 50
+
+// Consecutive scans that must agree before a pad turns on or off.
+#define TOUCH_DEBOUNCE_SCANS 2
+// Baseline drift when the whole neck is idle: base += (raw - base) >> SHIFT.
+// 6 settles in ~64 scans, around a second.
+#define TOUCH_DRIFT_SHIFT 6
+// A pad reading "held" this long is re-baselined, in case its baseline was
+// captured under a finger. 0 = never.
+#define TOUCH_MAX_ON_SECONDS 30
+
+// Samples averaged per pad during calibration.
+#define TOUCH_CAL_SAMPLES 32
+// Where per-pad COMPCAP calibration aims to park each idle reading. Full scale
+// is ~1016, and a pad left uncalibrated idles at 400-680, so most of the range
+// is gone before a finger arrives. Parking low leaves room for the touch.
+#define TOUCH_CAL_TARGET 120
+
+// Calibration: every badge blinks "hands off" for CAL_LEAD_MS, then lights
+// solid while each one calibrates in turn. A fret badge gets as long as the
+// master's own calibration took, plus 25% and CAL_MARGIN_MS.
+#define CAL_LEAD_MS 1500
+#define CAL_MARGIN_MS 20
+// A badge whose calibration failed is retried no sooner than this.
+#define CAL_RETRY_MS 2000
+// How long the master waits at power-up for the fret badges to boot.
+#define STARTUP_MS 500
+// Two taps on the master's button within this window recalibrate the neck. A
+// single tap toggles the ukulele, so it now lands this much later.
+#define DOUBLE_TAP_MS 350
+
+// 1 = a badge prints raw/baseline/delta per pad over its own USB serial after
+// every scan, rate-limited to TOUCH_DEBUG_MS.
+#define TOUCH_DEBUG 0
+#define TOUCH_DEBUG_MS 100
+// ---------------------------------------------------------------------------
+
 // The largest string count of any instrument, so it also sizes the master's
 // per-string state arrays. A 4-string instrument just uses the first 4 slots.
 #define NUM_STRINGS 6
@@ -57,41 +119,6 @@ inline uint8_t wireAddress(uint8_t badgeId) { return I2C_ADDR_BASE + badgeId; }
 // which is how you check a fret badge is being read correctly.
 #define MASTER_DEBUG 0
 
-// One-sided, in raw FreeTouch counts above the pad's boot baseline. The
-// baseline is measured once at startup and never moves, so a pad stays detected
-// for as long as you hold it - power-cycle the badge to recalibrate.
-// This window is genuinely tight and was measured, not guessed. Idle noise is
-// +/-1 count, but pressing one pad puts up to **+30** of crosstalk on its
-// neighbour, while a real touch can be as weak as **+36** when three pads are
-// held and the charge is shared. Six counts of daylight, so 35 splits it with
-// about 5 either way.
-//
-// This is the weakest part of the touch system. Too high and light multi-finger
-// presses vanish; too low and a neighbour's crosstalk invents a fret. If it
-// misbehaves, re-measure with TOUCH_DIAG rather than nudging blind.
-#define TOUCH_THRESHOLD 35
-
-// A held pad can also read *below* its baseline. When two pads are bridged by
-// one finger, the measured pad drains through its neighbour and swings
-// negative - pad 3 reaches -56 to -110 while pad 4 reads positive. That is a
-// real touch, so it has to count as one.
-//
-// This is a separate define because it is a different physical effect with a
-// different margin: crosstalk from an untouched neighbour is always *positive*
-// (pressing pad 4 without pad 3 leaves pad 3 at 0-1), so nothing pushes a pad
-// negative except being touched. The floor is how far a pad could drift down on
-// its own - pad 3 bottoms out around 81 against a baseline of 120.
-#define TOUCH_THRESHOLD_NEG 40
-// Samples averaged per pad during that one calibration pass.
-#define TOUCH_CAL_SAMPLES 16
-// Where per-pad COMPCAP calibration aims to park each idle reading. Full scale
-// is ~1016, and a pad left uncalibrated idles at 400-680, so most of the range
-// is gone before a finger arrives. Parking low leaves room for the touch.
-#define TOUCH_CAL_TARGET 120
-// 1 = every badge prints raw reading / baseline / delta per pad plus the touch
-// mask. Use it to pick TOUCH_THRESHOLD: watch the delta a real touch produces
-// against the delta an untouched pad sits at, and put the threshold between.
-#define TOUCH_DEBUG 0
 // 1 = boot into the touch bench instead of the instrument, to sweep the analog
 // settings on real hardware. See touch_diag.h. Never plays a note.
 #define TOUCH_DIAG 0

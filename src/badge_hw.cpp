@@ -1,5 +1,6 @@
 #include "badge_hw.h"
 #include "guitar_config.h"
+#include "scan_protocol.h"
 
 #include "Adafruit_FreeTouch.h"
 #include <wiring_private.h>
@@ -7,8 +8,7 @@
 const uint8_t sliderLedPins[NUM_SLIDER_LEDS] = {1, 0, 3, 2, 4};
 
 // Pad 4 sits on ADC_BATTERY rather than a normal Ax pin. RESISTOR_50K gives a
-// larger swing on touch than the 100K the Bop It game used, which is what makes
-// the one-sided TOUCH_THRESHOLD comparison below reliable.
+// larger swing on touch than the 100K the Bop It game used.
 static Adafruit_FreeTouch qt_1 = Adafruit_FreeTouch(A1, OVERSAMPLE_4, RESISTOR_50K, FREQ_MODE_NONE);
 static Adafruit_FreeTouch qt_2 = Adafruit_FreeTouch(A2, OVERSAMPLE_4, RESISTOR_50K, FREQ_MODE_NONE);
 static Adafruit_FreeTouch qt_3 = Adafruit_FreeTouch(A3, OVERSAMPLE_4, RESISTOR_50K, FREQ_MODE_NONE);
@@ -19,15 +19,7 @@ static Adafruit_FreeTouch *touchPads[NUM_TOUCH_PADS] = {&qt_1, &qt_2, &qt_3, &qt
 // Must match the constructors above.
 static const uint8_t kPadPins[NUM_TOUCH_PADS] = {A1, A2, A3, ADC_BATTERY, A4, A5};
 
-// Measured once at boot and then left alone for the whole session. An adaptive
-// baseline is the usual approach for capacitive touch, but it is wrong for an
-// instrument: any tracking fast enough to follow thermal drift is also fast
-// enough to creep up under a held chord and slide fingers back out of the
-// detection window. A fixed reference means a pad that reads high stays
-// detected for as long as you hold it. Power-cycle the badge to recalibrate.
-static int32_t touchBaseline[NUM_TOUCH_PADS];
 static uint16_t touchCompCap[NUM_TOUCH_PADS];
-static uint8_t cachedTouchMask = 0;
 
 static bool btnRaw = false;
 static bool btnStable = false;
@@ -79,9 +71,10 @@ static int32_t avgMeasure(uint8_t pad, uint8_t samples)
 //
 // Binary search rather than a fixed value because the parasitic load differs
 // per pad, and direction-detecting rather than assumed because the SAMD21 PTC
-// is undocumented. Costs about 20 ms at boot.
-static void calibrateCompCap()
+// is undocumented.
+void padsCalibrateCompCap()
 {
+    padsMux();
     for (uint8_t i = 0; i < NUM_TOUCH_PADS; i++)
     {
         touchPads[i]->setCompCap(0);
@@ -108,6 +101,24 @@ static void calibrateCompCap()
         touchCompCap[i] = lo;
         touchPads[i]->setCompCap(lo);
     }
+    padsIdle();
+}
+
+uint16_t padCompCap(uint8_t pad)
+{
+    return touchCompCap[pad];
+}
+
+uint32_t padsScan(uint16_t raw[NUM_TOUCH_PADS])
+{
+    uint32_t startUs = micros();
+    padsMux();
+    for (uint8_t i = 0; i < NUM_TOUCH_PADS; i++)
+    {
+        raw[i] = touchPads[i]->measure();
+    }
+    padsIdle();
+    return micros() - startUs;
 }
 
 void hwBegin()
@@ -138,105 +149,10 @@ void hwBegin()
             Serial.println(i + 1);
         }
     }
-    delay(50);
-
-    // begin() left the pads muxed to the PTC, which is what calibration needs.
-    calibrateCompCap();
-
-    // This is the only calibration the pads ever get, so average enough samples
-    // that noise cannot skew a pad's threshold for the whole session. Keep hands
-    // off the slider through here: whatever is being touched at boot becomes
-    // that pad's idea of "not touched".
-    for (uint8_t i = 0; i < NUM_TOUCH_PADS; i++)
-    {
-        int32_t sum = 0;
-        for (uint8_t s = 0; s < TOUCH_CAL_SAMPLES; s++)
-        {
-            sum += touchPads[i]->measure();
-        }
-        touchBaseline[i] = sum / TOUCH_CAL_SAMPLES;
-
-        char line[64];
-        snprintf(line, sizeof(line), "Pad %u  compcap %5u  baseline %4ld",
-                 (unsigned)(i + 1), (unsigned)touchCompCap[i], (long)touchBaseline[i]);
-        Serial.print(line);
-        // A pad that needs almost the whole register has nothing left to absorb
-        // drift. Pad 3 sits here on the reference badge - it carries the most
-        // parasitic capacitance and bottoms out around 81 even fully
-        // compensated, so it is the first place to look if touch degrades.
-        if (touchCompCap[i] > (COMPCAP_MAX - COMPCAP_MAX / 16))
-        {
-            Serial.print("   <- near compensation limit");
-        }
-        Serial.println();
-    }
-
+    // No calibration here: on a chained neck that would put every badge's PTC
+    // to work at once, which is the very interference the scan token exists to
+    // prevent. Each badge calibrates in its own turn instead, see touch.h.
     padsIdle();
-}
-
-// Every pad is an independent comparison against its fixed boot baseline, so
-// any number of them can be held at once and none of them time out.
-uint32_t touchUpdate()
-{
-    int32_t reading[NUM_TOUCH_PADS];
-    uint8_t mask = 0;
-
-    uint32_t startUs = micros();
-    padsMux();
-    for (uint8_t i = 0; i < NUM_TOUCH_PADS; i++)
-    {
-        reading[i] = touchPads[i]->measure();
-    }
-    padsIdle();
-    uint32_t scanUs = micros() - startUs;
-
-    for (uint8_t i = 0; i < NUM_TOUCH_PADS; i++)
-    {
-        // Either direction counts as a touch. A pad bridged to a held
-        // neighbour drains through it and swings negative rather than
-        // positive, and that is still a finger on the pad.
-        int32_t delta = reading[i] - touchBaseline[i];
-        if (delta > TOUCH_THRESHOLD || delta < -TOUCH_THRESHOLD_NEG)
-        {
-            mask |= (1 << i);
-        }
-    }
-
-    cachedTouchMask = mask;
-
-#if TOUCH_DEBUG
-    static uint32_t lastTouchPrintMs = 0;
-    uint32_t now = millis();
-    if (now - lastTouchPrintMs >= 250)
-    {
-        lastTouchPrintMs = now;
-        Serial.print("pad raw/base/delta:");
-        for (uint8_t i = 0; i < NUM_TOUCH_PADS; i++)
-        {
-            Serial.print(' ');
-            Serial.print(reading[i]);
-            Serial.print('/');
-            Serial.print(touchBaseline[i]);
-            Serial.print('/');
-            Serial.print(reading[i] - touchBaseline[i]);
-        }
-        Serial.print("  mask ");
-        for (int8_t i = NUM_TOUCH_PADS - 1; i >= 0; i--)
-        {
-            Serial.print((mask & (1 << i)) ? '1' : '0');
-        }
-        Serial.print("  scan ");
-        Serial.print(scanUs);
-        Serial.println("us");
-    }
-#endif
-
-    return scanUs;
-}
-
-uint8_t touchMask()
-{
-    return cachedTouchMask;
 }
 
 void buttonUpdate()
@@ -318,6 +234,22 @@ void updateCapoLeds(bool sounding)
     setSliderLeds(0x1F);
     digitalWrite(LED_BUILTIN, HIGH); // pad 6 counts as held too
     digitalWrite(LED_BUTTON, sounding ? HIGH : LOW);
+}
+
+void updatePromptLeds(uint8_t mode)
+{
+    bool on = false;
+    if (mode == PROMPT_HANDS_OFF)
+    {
+        on = (millis() / 125) % 2 == 0;
+    }
+    else if (mode == PROMPT_CALIBRATING)
+    {
+        on = true;
+    }
+    setSliderLeds(on ? 0x1F : 0);
+    digitalWrite(LED_BUILTIN, on ? HIGH : LOW);
+    digitalWrite(LED_BUTTON, LOW);
 }
 
 void updateUkePlayLeds(uint8_t padMask, bool sounding)

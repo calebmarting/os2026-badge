@@ -21,18 +21,19 @@
 // Out of numeric order on purpose so index 0..4 reads physically left to right.
 extern const uint8_t sliderLedPins[NUM_SLIDER_LEDS];
 
-// pinModes, touch pads, and the one-time touch calibration. Call once from
-// setup(), with nothing touching the slider.
+// pinModes and the touch pads' PTC setup. Leaves the pads driven LOW and does
+// not measure anything - calibration is the touch layer's job (touch.h).
 void hwBegin();
 
-// One full 6-pad scan: hands the pads to the PTC, measures each against its
-// fixed baseline, then drives them all LOW again. Pads are independent, so any
-// number can read as touched at once. Returns how long the scan took in us -
-// this is the measurement window, so nothing else may happen on the bus or the
-// LEDs while it runs.
-uint32_t touchUpdate();
-// Bit 0..5 = pad 1..6 touched. This is also the on-the-wire poll format.
-uint8_t touchMask();
+// One raw 6-pad scan: hands the pads to the PTC, measures each, then drives
+// them all LOW again. Returns how long that took in us. This is the
+// measurement window, so nothing else may happen on the bus or the LEDs while
+// it runs.
+uint32_t padsScan(uint16_t raw[NUM_TOUCH_PADS]);
+// Binary-searches each pad's compensation capacitor to park its idle reading
+// near TOUCH_CAL_TARGET. Measures continuously, so it needs the token too.
+void padsCalibrateCompCap();
+uint16_t padCompCap(uint8_t pad);
 
 void buttonUpdate();
 bool buttonIsDown();
@@ -57,6 +58,11 @@ void updatePlayLeds(uint8_t padMask, bool sounding);
 // strings light slider LEDs 1, 2, 4 and 5, leaving the middle one dark where
 // the disabled pads are. Takes a raw pad mask and does the grouping itself.
 void updateUkePlayLeds(uint8_t padMask, bool sounding);
+
+// The calibration prompt (PROMPT_* in scan_protocol.h): the whole slider and
+// LED_BUILTIN blinking fast means hands off, solid means calibrating. Call it
+// every loop while blinking.
+void updatePromptLeds(uint8_t mode);
 
 // The whole slider lit: this badge is acting as a capo. Deliberately the same
 // in both instruments - in ukulele mode the middle LED is otherwise impossible

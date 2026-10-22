@@ -1,0 +1,14 @@
+#include "params.h"
+#include "guitar_config.h"
+
+Params params = {
+    TOUCH_ON_THRESHOLD,
+    TOUCH_OFF_THRESHOLD,
+    TOUCH_NEG_THRESHOLD,
+    TOUCH_NEG_MODE,
+    TOUCH_NEG_RECAL_SCANS,
+    TOUCH_DEBOUNCE_SCANS,
+    TOUCH_DRIFT_SHIFT,
+    TOUCH_MAX_ON_SECONDS,
+    TOUCH_CAL_SAMPLES,
+};

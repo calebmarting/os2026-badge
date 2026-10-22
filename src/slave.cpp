@@ -2,6 +2,7 @@
 #include "badge_hw.h"
 #include "guitar_config.h"
 #include "scan_protocol.h"
+#include "touch.h"
 
 #include <Wire.h>
 
@@ -12,6 +13,9 @@ static uint8_t myAddress = 0;
 static volatile bool scanPending = false;
 static volatile uint8_t scanFlags = 0;
 static volatile uint8_t scanSeq = 0;
+static volatile bool calPending = false;
+static volatile uint8_t calSeq = 0;
+static volatile uint8_t promptMode = PROMPT_OFF;
 
 // Built in loop() after a scan, read from the I2C request ISR. Rebuilt with
 // interrupts off so a read can never see half an old frame and half a new one.
@@ -52,6 +56,15 @@ static void onReceive(int count)
             pendingFreq = (uint16_t)lo | ((uint16_t)hi << 8);
             freqDirty = true;
         }
+        else if (cmd == CMD_CAL && count >= 2)
+        {
+            calSeq = Wire.read();
+            calPending = true;
+        }
+        else if (cmd == CMD_PROMPT && count >= 2)
+        {
+            promptMode = Wire.read();
+        }
     }
 
     while (Wire.available())
@@ -69,7 +82,8 @@ void slaveToggleCapo()
 void slaveBegin(uint8_t id)
 {
     myAddress = wireAddress(id);
-    Wire.begin(myAddress);
+    // General call on, for the commands every badge hears at once.
+    Wire.begin(myAddress, true);
     Wire.onRequest(onRequest);
     Wire.onReceive(onReceive);
 
@@ -80,6 +94,15 @@ void slaveBegin(uint8_t id)
     Serial.print(id);
     Serial.print(", I2C 0x");
     Serial.println(myAddress, HEX);
+}
+
+static void publishFrame(uint8_t pads, uint8_t seq)
+{
+    uint8_t status = (capoOn ? FRAME_STATUS_CAPO : 0) | (touchCalibrated() ? FRAME_STATUS_CALIBRATED : 0);
+    noInterrupts();
+    frame[0] = (pads & FRAME_PAD_BITS) | status;
+    frame[1] = seq;
+    interrupts();
 }
 
 // Runs only while this badge holds the token. Everything that switches current
@@ -97,10 +120,14 @@ static void runScan()
     ukuleleMode = (flags & SCAN_FLAG_UKULELE) != 0;
 
     // Measured even with the capo on, so the master always sees the real hand.
-    touchUpdate();
-    uint8_t pads = touchMask() & FRAME_PAD_BITS;
+    uint32_t scanUs = touchScan((flags & SCAN_FLAG_ANY_TOUCH) == 0);
+    uint8_t pads = touchMask();
 
-    if (capoOn)
+    if (promptMode != PROMPT_OFF)
+    {
+        // The prompt owns the LEDs until the master clears it.
+    }
+    else if (capoOn)
     {
         updateCapoLeds(activeFreq > 0);
     }
@@ -113,18 +140,55 @@ static void runScan()
         updatePlayLeds(pads, activeFreq > 0);
     }
 
-    uint8_t status = capoOn ? FRAME_STATUS_CAPO : 0;
+#if TOUCH_DEBUG
+    static uint32_t lastDebugMs = 0;
+    if (touchCalibrated() && millis() - lastDebugMs >= TOUCH_DEBUG_MS)
+    {
+        lastDebugMs = millis();
+        touchPrintDebug(scanUs);
+    }
+#else
+    (void)scanUs;
+#endif
+
+    publishFrame(pads, seq);
+}
+
+// A long token: nobody else measures until the master has read the answer.
+static void runCalibration()
+{
     noInterrupts();
-    frame[0] = pads | status;
-    frame[1] = seq;
+    uint8_t seq = calSeq;
+    calPending = false;
     interrupts();
+
+    uint32_t calUs = touchCalibrate();
+    publishFrame(0, seq);
+
+    Serial.print("Calibrated in ");
+    Serial.print(calUs);
+    Serial.println("us");
 }
 
 void slaveLoop()
 {
+    if (calPending)
+    {
+        runCalibration();
+    }
     if (scanPending)
     {
         runScan();
+    }
+
+    // The hands-off blink runs while nobody is measuring at all; the solid
+    // calibrating light is set once and then left alone.
+    static uint8_t shownPrompt = PROMPT_OFF;
+    uint8_t prompt = promptMode;
+    if (prompt == PROMPT_HANDS_OFF || prompt != shownPrompt)
+    {
+        updatePromptLeds(prompt);
+        shownPrompt = prompt;
     }
 
     if (freqDirty)

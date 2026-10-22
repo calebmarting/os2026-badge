@@ -214,13 +214,14 @@ static void printTable()
     Serial.print(scanUs);
     Serial.print("us  mask=");
 
-    // Must match touchUpdate() in badge_hw.cpp, or the bench will disagree with
-    // the firmware it is being used to tune.
+    // The raw threshold test only - no hysteresis, debounce or neighbour rule
+    // (see touch.cpp) - with any negative counted, so it shows every pad the
+    // instrument could possibly read as held.
     uint8_t mask = 0;
     for (uint8_t i = 0; i < NUM_TOUCH_PADS; i++)
     {
         int32_t delta = reading[i] - baseline[i];
-        if (delta > TOUCH_THRESHOLD || delta < -TOUCH_THRESHOLD_NEG)
+        if (delta > TOUCH_ON_THRESHOLD || delta < -TOUCH_NEG_THRESHOLD)
         {
             mask |= (1 << i);
         }
