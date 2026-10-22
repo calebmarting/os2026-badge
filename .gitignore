@@ -41,3 +41,7 @@ c_cpp_properties.json
 
 # Claude Code per-machine settings
 .claude/settings.local.json
+
+# Python bytecode from the tools
+__pycache__/
+*.pyc
