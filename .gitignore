@@ -38,3 +38,6 @@ fp-info-cache
 launch.json
 c_cpp_properties.json
 .history
+
+# Claude Code per-machine settings
+.claude/settings.local.json

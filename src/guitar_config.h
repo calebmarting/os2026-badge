@@ -72,7 +72,7 @@
 // 1 = every badge prints raw reading / baseline / delta per pad plus the touch
 // mask. Use it to pick TOUCH_THRESHOLD: watch the delta a real touch produces
 // against the delta an untouched pad sits at, and put the threshold between.
-#define TOUCH_DEBUG 1
+#define TOUCH_DEBUG 0
 // 1 = boot into the touch bench instead of the instrument, to sweep the analog
 // settings on real hardware. See touch_diag.h. Never plays a note.
 #define TOUCH_DIAG 0
