@@ -68,7 +68,7 @@ void slaveBegin(uint8_t id)
     touchUpdate();
     cachedMask = reportableMask();
 
-    Wire.begin(id);
+    Wire.begin(wireAddress(id));
     Wire.onRequest(onRequest);
     Wire.onReceive(onReceive);
 

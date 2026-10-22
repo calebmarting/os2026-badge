@@ -1,8 +1,8 @@
 // Badge guitar.
 //
-// Up to 13 badges chained over the SAO I2C ports. The badge at ID 0 is the
+// 12 badges chained over the SAO I2C ports. The badge at ID 0 is the
 // master: it is the bus controller and its 6 touch pads are the strings. IDs
-// 1..12 are fret badges, where badge N is fret N and its pads report which
+// 1..11 are fret badges, where badge N is fret N and its pads report which
 // strings are held down at that fret. Every badge is also a speaker; they pair
 // up by ID so {0,1} sound the low E, {2,3} the A, and so on.
 //

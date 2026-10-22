@@ -30,7 +30,7 @@ static void setStringFreq(uint8_t s, uint16_t freq);
 
 static void writeFreq(uint8_t id, uint16_t freq)
 {
-    Wire.beginTransmission(id);
+    Wire.beginTransmission(wireAddress(id));
     Wire.write((uint8_t)(freq & 0xFF));
     Wire.write((uint8_t)(freq >> 8));
     if (Wire.endTransmission() != 0)
@@ -44,7 +44,7 @@ static void writeFreq(uint8_t id, uint16_t freq)
 // them apart on the slave, so this must stay exactly one byte.
 static void writeMode(uint8_t id)
 {
-    Wire.beginTransmission(id);
+    Wire.beginTransmission(wireAddress(id));
     Wire.write((uint8_t)(inst == &kUkulele ? 1 : 0));
     if (Wire.endTransmission() != 0)
     {
@@ -66,14 +66,14 @@ static void broadcastMode()
 
 static bool probe(uint8_t id)
 {
-    Wire.beginTransmission(id);
+    Wire.beginTransmission(wireAddress(id));
     return Wire.endTransmission() == 0;
 }
 
 void masterBegin()
 {
     Wire.begin();
-    // Left at the default 100 kHz on purpose. With up to 13 badges and the
+    // Left at the default 100 kHz on purpose. With 12 badges and the
     // cabling between them, bus capacitance is close to the 400 pF limit and
     // 400 kHz will not make the edges.
 
@@ -100,7 +100,7 @@ static void pollSlaves()
             continue;
         }
 
-        if (Wire.requestFrom(id, (uint8_t)1) != 1)
+        if (Wire.requestFrom(wireAddress(id), (uint8_t)1) != 1)
         {
             slavePresent[id] = false;
             slavePads[id] = 0;

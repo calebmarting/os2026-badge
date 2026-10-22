@@ -36,8 +36,8 @@ static const uint8_t kGuitarPadMasks[NUM_STRINGS] = {0x01, 0x02, 0x04, 0x08, 0x1
 // consulted, so groupPads() disables it for free.
 static const uint8_t kUkePadMasks[NUM_UKE_STRINGS] = {0x01, 0x04, 0x08, 0x20};
 
-const Instrument kGuitar = {kStringFret, kGuitarPadMasks, NUM_STRINGS, 2};
-const Instrument kUkulele = {kUkeFret, kUkePadMasks, NUM_UKE_STRINGS, 3};
+const Instrument kGuitar = {kStringFret, kGuitarPadMasks, NUM_STRINGS, 2, GUITAR_OCTAVE_SHIFT};
+const Instrument kUkulele = {kUkeFret, kUkePadMasks, NUM_UKE_STRINGS, 3, UKE_OCTAVE_SHIFT};
 
 uint16_t freqForFret(const Instrument *inst, uint8_t stringIndex, uint8_t fret)
 {
@@ -49,7 +49,7 @@ uint16_t freqForFret(const Instrument *inst, uint8_t stringIndex, uint8_t fret)
     {
         fret = NUM_FRETS;
     }
-    return inst->fretTable[stringIndex][fret] << OCTAVE_SHIFT;
+    return inst->fretTable[stringIndex][fret] << inst->octaveShift;
 }
 
 uint8_t stringIndexForBadge(const Instrument *inst, uint8_t badgeId)

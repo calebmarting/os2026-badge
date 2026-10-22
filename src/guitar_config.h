@@ -8,9 +8,16 @@
 #define NUM_STRINGS 6
 #define NUM_UKE_STRINGS 4
 #define NUM_FRETS 12
-// Badge IDs 0..12: ID 0 is the master, 1..12 are frets 1..12.
-#define MAX_BADGES 13
+// Exactly 12 badges: ID 0 is the master, 1..11 are frets 1..11. That also
+// splits evenly into both instruments - 6 strings x 2 badges, 4 strings x 3.
+#define MAX_BADGES 12
 #define NUM_PADS 6
+
+// A fret badge answers at I2C_ADDR_BASE + its ID. Raw IDs 1..7 would land in
+// the 0x00-0x07 block the I2C spec reserves (general call, CBUS, Hs-mode
+// master codes), and the offset keeps clear of the accelerometers at 0x18.
+#define I2C_ADDR_BASE 0x30
+inline uint8_t wireAddress(uint8_t badgeId) { return I2C_ADDR_BASE + badgeId; }
 
 // Pads 1, 3, 4 and 6. Pads 2 and 5 are not read at all in ukulele mode, so a
 // badge masks them out of what it reports rather than just ignoring them later.
@@ -22,9 +29,11 @@
 // A strum pad held longer than this is a mute-and-hold, not a strum, so
 // releasing it stays silent. Raise it if quick strums are being swallowed.
 #define STRUM_MAX_HOLD_MS 250
-// Doubles every pitch per step. The piezo resonates near 4 kHz and reproduces
-// low E (82 Hz) poorly, so set this to 1 if the bottom strings are inaudible.
-#define OCTAVE_SHIFT 0
+// Doubles every pitch per step, per instrument. The piezo resonates near 4 kHz
+// and reproduces a true low E (82 Hz) poorly, so the guitar plays an octave up
+// (164-1319 Hz). The ukulele's 262-880 Hz is already fine at true pitch.
+#define GUITAR_OCTAVE_SHIFT 1
+#define UKE_OCTAVE_SHIFT 0
 // 1 = fretting a ringing string retunes it, giving hammer-ons and slides.
 // 0 = pitch is latched at the moment of the strum.
 #define PITCH_TRACKS_FRETS 1
@@ -107,13 +116,15 @@ struct Instrument
     const uint8_t *padMasks;
     uint8_t stringCount;
     uint8_t badgesPerString;
+    // Octaves added on top of the table, so the tables stay true concert pitch.
+    uint8_t octaveShift;
 };
 
 extern const Instrument kGuitar;
 extern const Instrument kUkulele;
 
-// Pitch for a string/fret pair, with OCTAVE_SHIFT applied. Out-of-range frets
-// clamp rather than read past the table.
+// Pitch for a string/fret pair, with the instrument's octaveShift applied.
+// Out-of-range frets clamp rather than read past the table.
 uint16_t freqForFret(const Instrument *inst, uint8_t stringIndex, uint8_t fret);
 
 // Which string a badge sounds. Badges are handed out in consecutive runs, so a

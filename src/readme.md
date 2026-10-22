@@ -1,6 +1,6 @@
 # Badge Guitar
 
-Chains up to 13 badges over the SAO I2C ports into one playable guitar - or a
+Chains 12 badges over the SAO I2C ports into one playable guitar - or a
 ukulele, at the press of a button. The same firmware image goes on every badge;
 each badge is given an ID that decides its role.
 
@@ -11,13 +11,13 @@ each badge is given an ID that decides its role.
 | ID | Role |
 |---|---|
 | 0 | **Master.** Bus controller. Its 6 touch pads are the strings - pad 1 is the low E. |
-| 1-12 | **Fret badges.** Badge N is fret N. Its pads report which strings are held at that fret. |
+| 1-11 | **Fret badges.** Badge N is fret N. Its pads report which strings are held at that fret. |
 
 Every badge is also a speaker. Badges pair up by ID to share a string:
 
 | String | Badge IDs |
 |---|---|
-| 1 - low E | 0, 1, 12 |
+| 1 - low E | 0, 1 |
 | 2 - A | 2, 3 |
 | 3 - D | 4, 5 |
 | 4 - G | 6, 7 |
@@ -27,7 +27,8 @@ Every badge is also a speaker. Badges pair up by ID to share a string:
 Lay the fret badges out in a row and you have a neck. The master resolves the
 **highest** fret held per string, the way a real fretboard works, and writes the
 resulting pitch out to the badges that sound that string. Standard tuning,
-E2 A2 D3 G3 B3 E4, 12 frets.
+E2 A2 D3 G3 B3 E4, 11 frets - played **an octave up** (E3 to E5) because the
+piezo cannot make a true 82 Hz low E audible.
 
 ## Ukulele mode
 
@@ -55,21 +56,21 @@ slider:  1   2   3   4   5
 Standard reentrant GCEA tuning - the G is pitched *above* the C and E, not below,
 which is what gives a ukulele its sound:
 
-| String | Pad | Slider LED | Open | Fret 12 | Badge IDs |
+| String | Pad | Slider LED | Open | Fret 11 | Badge IDs |
 |---|---|---|---|---|---|
-| 1 - G | 1 | 1 | G4 392 Hz | 784 Hz | 0, 1, 2, 12 |
-| 2 - C | 3 | 2 | C4 262 Hz | 523 Hz | 3, 4, 5 |
-| 3 - E | 4 | 4 | E4 330 Hz | 659 Hz | 6, 7, 8 |
-| 4 - A | 6 | 5 | A4 440 Hz | 880 Hz | 9, 10, 11 |
+| 1 - G | 1 | 1 | G4 392 Hz | 740 Hz | 0, 1, 2 |
+| 2 - C | 3 | 2 | C4 262 Hz | 494 Hz | 3, 4, 5 |
+| 3 - E | 4 | 4 | E4 330 Hz | 622 Hz | 6, 7, 8 |
+| 4 - A | 6 | 5 | A4 440 Hz | 831 Hz | 9, 10, 11 |
 
 Slider LED 3 stays dark, and every badge on the neck shows this same layout -
 not just the master. Badges group in threes rather than pairs, so each ukulele
 string is louder than a guitar string. Everything else - muting, strumming,
 sustain, hammer-ons - behaves identically.
 
-> The whole ukulele range is 262-880 Hz, comfortably inside what the piezo
-> reproduces well. If the guitar's low E turns out too quiet to hear, ukulele
-> mode will still sound correct regardless of `OCTAVE_SHIFT`.
+> The ukulele plays at true pitch: its whole range is 262-831 Hz, comfortably
+> inside what the piezo reproduces well. Only the guitar is shifted up an
+> octave (`GUITAR_OCTAVE_SHIFT` / `UKE_OCTAVE_SHIFT`).
 
 ## Capo
 
@@ -120,12 +121,12 @@ LEDs, on every badge:
    write it down - most significant bit on the **left**, ones place on the right.
 
    ```
-   ID 5  ->  [ ][ ][*][ ][*]      ID 12 ->  [ ][*][*][ ][ ]
+   ID 5  ->  [ ][ ][*][ ][*]      ID 11 ->  [ ][*][ ][*][*]
              16  8  4  2  1                 16  8  4  2  1
    ```
 
    The leftmost LED is the 16s place, so it stays dark for every valid ID.
-2. **Short tap** to increment, wrapping 0 -> 12 -> 0.
+2. **Short tap** to increment, wrapping 0 -> 11 -> 0.
 3. **Long-press** again to save. The LEDs blink three times and the badge reboots
    into its new role.
 
@@ -142,14 +143,14 @@ Bus the badges together over the SAO ports: SDA (D11), SCL (D12), plus GND and 3
 Three things will bite you otherwise:
 
 - **Lift the I2C pull-ups on all but two badges.** Each badge carries 5.1 k on SDA
-  and SCL. Thirteen in parallel is about 390 ohms, which needs ~7.4 mA of sink per
+  and SCL. Twelve in parallel is about 425 ohms, which needs ~7.8 mA of sink per
   pin against a 3 mA spec. The symptom is polls returning garbage as you add badges.
 - **Only one badge may be ID 0.** Two controllers on one bus will collide.
 - **The firmware never touches 0x18.** Every badge has an accelerometer at that
   address, so a chained neck has 13 devices answering it. That is also why the
   guitar does not use the accelerometer at all.
 
-The bus stays at the default 100 kHz on purpose - with 13 badges plus cabling the
+The bus stays at the default 100 kHz on purpose - with 12 badges plus cabling the
 capacitance is near the 400 pF limit and 400 kHz will not make the edges.
 
 ## Protocol
@@ -189,7 +190,8 @@ Everything adjustable is at the top of `guitar_config.h`:
 |---|---|---|
 | `SUSTAIN_MS` | 3000 | how long a note rings |
 | `STRUM_MAX_HOLD_MS` | 250 | longer hold = mute instead of strum |
-| `OCTAVE_SHIFT` | 0 | **set to 1 if the low strings are inaudible** |
+| `GUITAR_OCTAVE_SHIFT` | 1 | guitar plays an octave above concert pitch |
+| `UKE_OCTAVE_SHIFT` | 0 | ukulele plays at concert pitch |
 | `PITCH_TRACKS_FRETS` | 1 | 0 latches pitch at the strum, losing hammer-ons |
 | `TOUCH_THRESHOLD` | 35 | positive; window is only 30-36 wide, see Touch pads |
 | `TOUCH_THRESHOLD_NEG` | 40 | negative; a bridged pad swings below its baseline |
@@ -271,9 +273,9 @@ Two things already ruled out by measurement, so you needn't retry them: the
 and `FREQ_MODE_SPREAD` is unusable through the stock constructor because
 `adafruit_ptc_get_config_default()` leaves `config.hops` uninitialised.
 
-`OCTAVE_SHIFT` is the one most likely to need changing. The piezo resonates near
-4 kHz and reproduces an 82 Hz low E poorly, so true pitch may be very quiet down
-there. Setting it to 1 moves everything up an octave.
+`GUITAR_OCTAVE_SHIFT` defaults to 1 because the piezo resonates near 4 kHz and
+reproduces an 82 Hz low E poorly. Set it to 2 for brighter still, or 0 for
+concert pitch.
 
 ## Building
 
