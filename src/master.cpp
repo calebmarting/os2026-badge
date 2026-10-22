@@ -1,6 +1,7 @@
 #include "master.h"
 #include "badge_hw.h"
 #include "guitar_config.h"
+#include "console.h"
 #include "scan_protocol.h"
 #include "touch.h"
 
@@ -26,6 +27,7 @@ struct FretLink
     bool fresh;
     uint8_t misses;      // consecutive, resets on a good frame
     uint16_t missesLog;  // since the last stats line
+    uint16_t badLog;     // frames that answered but failed the check
 };
 
 static FretLink frets[MAX_BADGES];
@@ -57,6 +59,11 @@ static uint32_t cycleMaxUs = 0;
 static uint32_t cycleCount = 0;
 static uint32_t lastStatsMs = 0;
 static uint32_t lastRecoverMs = 0;
+
+// Console-controlled output, see printHelp().
+static bool logPadsOn = MASTER_LOG;
+static bool statsOn = MASTER_LOG;
+static uint16_t watchMask = 0; // bit N = print badge N's debug block
 
 static void setStringFreq(uint8_t s, uint16_t freq);
 
@@ -99,6 +106,11 @@ static void enableBusTimeouts()
 static void busBegin()
 {
     Wire.begin();
+    // 100 kHz, explicitly. With 12 badges and the cabling between them, bus
+    // capacitance is close to the 400 pF limit and 400 kHz will not make the
+    // edges. setClock() re-initialises CTRLA, so it must come before the
+    // timeouts.
+    Wire.setClock(100000);
     enableBusTimeouts();
 }
 
@@ -158,7 +170,10 @@ static void printPads(uint8_t pads)
 // pad 1 leftmost. "------" is a stale badge, a trailing 'c' a capo.
 static void logPads()
 {
-#if MASTER_LOG
+    if (!logPadsOn)
+    {
+        return;
+    }
     Serial.print(millis());
     Serial.print(" 0:");
     printPads(touchMask());
@@ -178,7 +193,6 @@ static void logPads()
         }
     }
     Serial.println();
-#endif
 }
 
 static bool noteMiss(uint8_t id)
@@ -258,10 +272,11 @@ static bool scanFret(uint8_t id, uint8_t flags)
     }
     uint8_t b0 = Wire.read();
     uint8_t b1 = Wire.read();
-    // A badge that had not finished, or never saw this token, still holds the
-    // previous frame - keep the last good state rather than trust it.
-    if (b1 != scanSeq)
+    // A corrupted frame, or one from a badge that had not finished or never
+    // saw this token, fails the check - keep the last good state.
+    if (b1 != frameCheck(addr, scanSeq, b0))
     {
+        frets[id].badLog++;
         return noteMiss(id);
     }
     return noteFrame(id, b0);
@@ -291,7 +306,7 @@ static bool calibrateFret(uint8_t id)
     bool ok = Wire.requestFrom(addr, (uint8_t)FRAME_LEN) == FRAME_LEN;
     uint8_t b0 = ok ? Wire.read() : 0;
     uint8_t b1 = ok ? Wire.read() : 0;
-    ok = ok && b1 == scanSeq && (b0 & FRAME_STATUS_CALIBRATED);
+    ok = ok && b1 == frameCheck(addr, scanSeq, b0) && (b0 & FRAME_STATUS_CALIBRATED);
     frets[id].calibrated = ok;
     frets[id].lastCalMs = millis();
 
@@ -360,10 +375,6 @@ void masterRecalibrate()
 void masterBegin()
 {
     busBegin();
-    // Left at the default 100 kHz on purpose. With 12 badges and the
-    // cabling between them, bus capacitance is close to the 400 pF limit and
-    // 400 kHz will not make the edges.
-
     // The fret badges power up with the master and need a moment before they
     // are listening.
     delay(STARTUP_MS);
@@ -558,6 +569,30 @@ static void renderLeds(bool sounding)
     }
 }
 
+static void printIdCounts(const char *label, bool (*pick)(const FretLink &), uint16_t FretLink::*count)
+{
+    Serial.print(label);
+    bool any = false;
+    for (uint8_t id = 1; id < MAX_BADGES; id++)
+    {
+        if (pick(frets[id]))
+        {
+            any = true;
+            Serial.print(' ');
+            Serial.print(id);
+            if (count)
+            {
+                Serial.print('=');
+                Serial.print(frets[id].*count);
+            }
+        }
+    }
+    if (!any)
+    {
+        Serial.print(" none");
+    }
+}
+
 static void logStats()
 {
     uint32_t now = millis();
@@ -567,38 +602,213 @@ static void logStats()
     }
     lastStatsMs = now;
 
-#if MASTER_LOG
-    char line[96];
-    snprintf(line, sizeof(line), "cycle avg %lu us max %lu us | scan %lu us window %lu us | misses",
-             (unsigned long)(cycleCount ? cycleSumUs / cycleCount : 0), (unsigned long)cycleMaxUs,
-             (unsigned long)ownScanMaxUs, (unsigned long)scanWindowUs());
-    Serial.print(line);
-    bool any = false;
-    for (uint8_t id = 1; id < MAX_BADGES; id++)
+    if (statsOn)
     {
-        if (frets[id].missesLog > 0)
-        {
-            any = true;
-            Serial.print(' ');
-            Serial.print(id);
-            Serial.print('=');
-            Serial.print(frets[id].missesLog);
-            if (!frets[id].fresh)
-            {
-                Serial.print("(stale)");
-            }
-        }
+        char line[96];
+        snprintf(line, sizeof(line), "cycle avg %lu us max %lu us | scan %lu us window %lu us | ",
+                 (unsigned long)(cycleCount ? cycleSumUs / cycleCount : 0), (unsigned long)cycleMaxUs,
+                 (unsigned long)ownScanMaxUs, (unsigned long)scanWindowUs());
+        Serial.print(line);
+        // A stale badge misses every token, so its count says nothing new.
+        printIdCounts("missed", [](const FretLink &f) { return f.fresh && f.missesLog > 0; }, &FretLink::missesLog);
+        printIdCounts(" | bad", [](const FretLink &f) { return f.badLog > 0; }, &FretLink::badLog);
+        printIdCounts(" | stale", [](const FretLink &f) { return !f.fresh; }, nullptr);
+        Serial.println();
     }
-    Serial.println(any ? "" : " none");
-#endif
 
     for (uint8_t id = 1; id < MAX_BADGES; id++)
     {
         frets[id].missesLog = 0;
+        frets[id].badLog = 0;
     }
     cycleSumUs = 0;
     cycleMaxUs = 0;
     cycleCount = 0;
+}
+
+static void printDebugBlock(uint8_t id, const uint8_t *blk)
+{
+    char line[200];
+    int n = snprintf(line, sizeof(line), "dbg %2u raw/base/delta:", (unsigned)id);
+    for (uint8_t i = 0; i < NUM_PADS; i++)
+    {
+        int32_t raw = blk[2 * i] | (blk[2 * i + 1] << 8);
+        int32_t base = blk[12 + 2 * i] | (blk[13 + 2 * i] << 8);
+        n += snprintf(line + n, sizeof(line) - n, " %ld/%ld/%ld", (long)raw, (long)base, (long)(raw - base));
+    }
+    Serial.print(line);
+    Serial.print("  on ");
+    printPads(blk[24]);
+    Serial.print(" neg ");
+    printPads(blk[25]);
+    snprintf(line, sizeof(line), "  recal %u  scan %uus  cal %ums",
+             (unsigned)(blk[26] | (blk[27] << 8)), (unsigned)(blk[28] | (blk[29] << 8)),
+             (unsigned)(blk[30] | (blk[31] << 8)));
+    Serial.println(line);
+}
+
+// Pulls one badge's debug block over the bus, in the master's slot, so a
+// single USB cable on the master shows raw/baseline/delta for any badge.
+static void watchOne(uint8_t id)
+{
+    uint8_t blk[DEBUG_LEN];
+    if (id == 0)
+    {
+        touchPackDebug(blk);
+        printDebugBlock(0, blk);
+        return;
+    }
+
+    uint8_t addr = wireAddress(id);
+    Wire.beginTransmission(addr);
+    Wire.write(CMD_DEBUG);
+    bool ok = Wire.endTransmission() == 0 && Wire.requestFrom(addr, (uint8_t)DEBUG_LEN) == DEBUG_LEN;
+    for (uint8_t i = 0; ok && i < DEBUG_LEN; i++)
+    {
+        blk[i] = Wire.read();
+    }
+    if (!ok || crc8(blk, DEBUG_LEN - 1, crc8(&addr, 1)) != blk[DEBUG_LEN - 1])
+    {
+        Serial.print("dbg ");
+        Serial.print(id);
+        Serial.println(" no answer");
+        return;
+    }
+    printDebugBlock(id, blk);
+}
+
+// Round-robins the watched badges, one per WATCH_MS, so watching the whole
+// neck costs one extra bus read per cycle at most.
+static void serviceWatch()
+{
+    static uint32_t lastWatchMs = 0;
+    static uint8_t cursor = 0;
+    if (watchMask == 0 || millis() - lastWatchMs < WATCH_MS)
+    {
+        return;
+    }
+    lastWatchMs = millis();
+
+    for (uint8_t step = 0; step < MAX_BADGES; step++)
+    {
+        cursor = (cursor + 1) % MAX_BADGES;
+        if (watchMask & (1 << cursor))
+        {
+            watchOne(cursor);
+            return;
+        }
+    }
+}
+
+static void printInfo()
+{
+    Serial.print(inst == &kUkulele ? "Ukulele" : "Guitar");
+    Serial.print(", window ");
+    Serial.print(scanWindowUs());
+    Serial.print("us, master cal ");
+    Serial.print(ownCalUs / 1000);
+    Serial.println("ms");
+    for (uint8_t id = 1; id < MAX_BADGES; id++)
+    {
+        const FretLink &f = frets[id];
+        char line[80];
+        snprintf(line, sizeof(line), "  fret %2u  I2C 0x%02X  %s%s%s",
+                 (unsigned)id, (unsigned)wireAddress(id), f.fresh ? "present" : "stale",
+                 f.fresh && !f.calibrated ? ", uncalibrated" : "", f.capo ? ", capo" : "");
+        Serial.println(line);
+    }
+}
+
+static void printHelp()
+{
+    Serial.println("Master commands:");
+    Serial.println("  log on|off      pad-change timeline");
+    Serial.println("  stats on|off    cycle time, misses, bad frames, once a second");
+    Serial.println("  watch N|all|off raw/baseline/delta of badge N (0 = master)");
+    Serial.println("  cal             recalibrate the whole neck (hands off)");
+    Serial.println("  info            which badges are present");
+}
+
+static bool onOff(const char *arg, bool current)
+{
+    if (strcmp(arg, "on") == 0)
+    {
+        return true;
+    }
+    if (strcmp(arg, "off") == 0)
+    {
+        return false;
+    }
+    return !current;
+}
+
+static void handleCommand(char *line)
+{
+    char *arg = strchr(line, ' ');
+    if (arg)
+    {
+        *arg++ = '\0';
+        while (*arg == ' ')
+        {
+            arg++;
+        }
+    }
+    else
+    {
+        arg = line + strlen(line);
+    }
+
+    if (strcmp(line, "log") == 0)
+    {
+        logPadsOn = onOff(arg, logPadsOn);
+        Serial.println(logPadsOn ? "log on" : "log off");
+    }
+    else if (strcmp(line, "stats") == 0)
+    {
+        statsOn = onOff(arg, statsOn);
+        Serial.println(statsOn ? "stats on" : "stats off");
+    }
+    else if (strcmp(line, "watch") == 0)
+    {
+        if (strcmp(arg, "all") == 0)
+        {
+            watchMask = (1 << MAX_BADGES) - 1;
+        }
+        else if (strcmp(arg, "off") == 0 || *arg == '\0')
+        {
+            watchMask = 0;
+        }
+        else
+        {
+            long id = strtol(arg, nullptr, 10);
+            if (id >= 0 && id < MAX_BADGES)
+            {
+                watchMask ^= (1 << id);
+            }
+        }
+        Serial.print("watching:");
+        for (uint8_t id = 0; id < MAX_BADGES; id++)
+        {
+            if (watchMask & (1 << id))
+            {
+                Serial.print(' ');
+                Serial.print(id);
+            }
+        }
+        Serial.println(watchMask ? "" : " nothing");
+    }
+    else if (strcmp(line, "cal") == 0)
+    {
+        calibrateAll();
+    }
+    else if (strcmp(line, "info") == 0)
+    {
+        printInfo();
+    }
+    else
+    {
+        printHelp();
+    }
 }
 
 // One full cycle: every fret badge's window in turn, then the master's own.
@@ -675,6 +885,13 @@ void masterLoop()
     {
         logPads();
     }
+
+    char line[64];
+    if (consoleReadLine(line, sizeof(line)))
+    {
+        handleCommand(line);
+    }
+    serviceWatch();
 
     // A badge that answers without a baseline has just booted - a brown-out,
     // or a late arrival. Calibrate it in the master's slot, one per cycle, and

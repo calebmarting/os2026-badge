@@ -2,6 +2,7 @@
 #include "badge_hw.h"
 #include "guitar_config.h"
 #include "scan_protocol.h"
+#include "console.h"
 #include "touch.h"
 
 #include <Wire.h>
@@ -20,6 +21,13 @@ static volatile uint8_t promptMode = PROMPT_OFF;
 // Built in loop() after a scan, read from the I2C request ISR. Rebuilt with
 // interrupts off so a read can never see half an old frame and half a new one.
 static volatile uint8_t frame[FRAME_LEN] = {0, 0};
+// Same idea for the debug block, refreshed after every scan. CMD_DEBUG only
+// arms it for the next read, so serving it costs the ISR nothing but a copy.
+static volatile uint8_t debugBlock[DEBUG_LEN];
+static volatile bool debugNext = false;
+
+// Raw/baseline/delta on this badge's own USB serial. "debug" toggles it.
+static bool debugPrint = TOUCH_DEBUG;
 
 static volatile uint16_t pendingFreq = 0;
 static volatile bool freqDirty = false;
@@ -34,7 +42,15 @@ static bool capoOn = false;
 
 static void onRequest()
 {
-    Wire.write((const uint8_t *)frame, FRAME_LEN);
+    if (debugNext)
+    {
+        debugNext = false;
+        Wire.write((const uint8_t *)debugBlock, DEBUG_LEN);
+    }
+    else
+    {
+        Wire.write((const uint8_t *)frame, FRAME_LEN);
+    }
 }
 
 // Every write starts with a command byte; see scan_protocol.h.
@@ -64,6 +80,10 @@ static void onReceive(int count)
         else if (cmd == CMD_PROMPT && count >= 2)
         {
             promptMode = Wire.read();
+        }
+        else if (cmd == CMD_DEBUG)
+        {
+            debugNext = true;
         }
     }
 
@@ -99,9 +119,20 @@ void slaveBegin(uint8_t id)
 static void publishFrame(uint8_t pads, uint8_t seq)
 {
     uint8_t status = (capoOn ? FRAME_STATUS_CAPO : 0) | (touchCalibrated() ? FRAME_STATUS_CALIBRATED : 0);
+    uint8_t b0 = (pads & FRAME_PAD_BITS) | status;
+    uint8_t check = frameCheck(myAddress, seq, b0);
+
+    uint8_t block[DEBUG_LEN];
+    touchPackDebug(block);
+    block[DEBUG_LEN - 1] = crc8(block, DEBUG_LEN - 1, crc8(&myAddress, 1));
+
     noInterrupts();
-    frame[0] = (pads & FRAME_PAD_BITS) | status;
-    frame[1] = seq;
+    frame[0] = b0;
+    frame[1] = check;
+    for (uint8_t i = 0; i < DEBUG_LEN; i++)
+    {
+        debugBlock[i] = block[i];
+    }
     interrupts();
 }
 
@@ -140,16 +171,12 @@ static void runScan()
         updatePlayLeds(pads, activeFreq > 0);
     }
 
-#if TOUCH_DEBUG
     static uint32_t lastDebugMs = 0;
-    if (touchCalibrated() && millis() - lastDebugMs >= TOUCH_DEBUG_MS)
+    if (debugPrint && touchCalibrated() && millis() - lastDebugMs >= TOUCH_DEBUG_MS)
     {
         lastDebugMs = millis();
         touchPrintDebug(scanUs);
     }
-#else
-    (void)scanUs;
-#endif
 
     publishFrame(pads, seq);
 }
@@ -170,8 +197,28 @@ static void runCalibration()
     Serial.println("us");
 }
 
+static void handleCommand(const char *line)
+{
+    if (strcmp(line, "debug") == 0 || strcmp(line, "d") == 0)
+    {
+        debugPrint = !debugPrint;
+        Serial.println(debugPrint ? "debug on" : "debug off");
+    }
+    else
+    {
+        Serial.println("Fret badge commands: debug (toggle raw/baseline/delta), help");
+        Serial.println("Everything else is on the master's console.");
+    }
+}
+
 void slaveLoop()
 {
+    char line[48];
+    if (consoleReadLine(line, sizeof(line)))
+    {
+        handleCommand(line);
+    }
+
     if (calPending)
     {
         runCalibration();

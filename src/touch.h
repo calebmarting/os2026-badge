@@ -35,3 +35,7 @@ int32_t touchDelta(uint8_t pad);
 
 // One line of raw/baseline/delta per pad plus the masks, for tuning.
 void touchPrintDebug(uint32_t scanUs);
+
+// Bytes 0..31 of the debug block (DEBUG_LEN in scan_protocol.h), from the
+// last scan and calibration.
+void touchPackDebug(uint8_t *out);

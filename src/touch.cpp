@@ -23,6 +23,8 @@ static bool calibrated = false;
 static uint8_t onMask = 0;
 static uint8_t negMask = 0;
 static uint16_t recalCount = 0;
+static uint32_t lastScanUs = 0;
+static uint32_t lastCalUs = 0;
 
 static int32_t baseline(const PadState &p)
 {
@@ -70,7 +72,8 @@ uint32_t touchCalibrate()
     negMask = 0;
     calibrated = true;
 
-    return micros() - startUs;
+    lastCalUs = micros() - startUs;
+    return lastCalUs;
 }
 
 bool touchCalibrated()
@@ -199,6 +202,7 @@ uint32_t touchScan(bool globalIdle)
 
     onMask = newOn;
     negMask = newNeg;
+    lastScanUs = scanUs;
     return scanUs;
 }
 
@@ -230,6 +234,31 @@ int32_t touchBaseline(uint8_t pad)
 int32_t touchDelta(uint8_t pad)
 {
     return pads[pad].delta;
+}
+
+static void putU16(uint8_t *out, uint32_t value)
+{
+    if (value > 0xFFFF)
+    {
+        value = 0xFFFF;
+    }
+    out[0] = value & 0xFF;
+    out[1] = value >> 8;
+}
+
+void touchPackDebug(uint8_t *out)
+{
+    for (uint8_t i = 0; i < NUM_TOUCH_PADS; i++)
+    {
+        int32_t base = baseline(pads[i]);
+        putU16(out + 2 * i, pads[i].raw);
+        putU16(out + 12 + 2 * i, base < 0 ? 0 : base);
+    }
+    out[24] = onMask;
+    out[25] = negMask;
+    putU16(out + 26, recalCount);
+    putU16(out + 28, lastScanUs);
+    putU16(out + 30, lastCalUs / 1000);
 }
 
 static void printMask(uint8_t mask)

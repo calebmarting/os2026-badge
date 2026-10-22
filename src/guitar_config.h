@@ -60,7 +60,9 @@
 #define DOUBLE_TAP_MS 350
 
 // 1 = a badge prints raw/baseline/delta per pad over its own USB serial after
-// every scan, rate-limited to TOUCH_DEBUG_MS.
+// every scan, rate-limited to TOUCH_DEBUG_MS. Only the boot state: "debug" on
+// a badge's console toggles it, and "watch" on the master shows the same
+// numbers for any badge without moving the cable.
 #define TOUCH_DEBUG 0
 #define TOUCH_DEBUG_MS 100
 // ---------------------------------------------------------------------------
@@ -112,8 +114,12 @@ inline uint8_t wireAddress(uint8_t badgeId) { return I2C_ADDR_BASE + badgeId; }
 
 // 1 = the master logs every badge's pads whenever any of them changes, plus a
 // stats line every LOG_STATS_MS with the cycle time, scan window and misses.
+// Both are only the boot state: "log" and "stats" on the master's console
+// switch them at runtime.
 #define MASTER_LOG 1
 #define LOG_STATS_MS 1000
+// How often "watch" prints one badge's raw/baseline/delta.
+#define WATCH_MS 50
 
 // 1 = the master prints the resolved fret and pitch per string over serial,
 // which is how you check a fret badge is being read correctly.

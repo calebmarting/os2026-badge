@@ -27,6 +27,8 @@ enum : uint8_t
     CMD_CAL = 0x53,
     // [mode] general call - the calibration prompt, one of PROMPT_*.
     CMD_PROMPT = 0x54,
+    // [] - the next read returns this badge's debug block instead of a frame.
+    CMD_DEBUG = 0x56,
 };
 
 #define PROMPT_OFF 0
@@ -43,9 +45,12 @@ enum : uint8_t
 
 // A badge's answer to a read, valid for the last CMD_SCAN it handled.
 //   byte 0: bits 0..5 = pads 1..6 measured as touched, plus status bits
-//   byte 1: the seq of the CMD_SCAN this frame answers
-// A badge that missed its token still holds the previous frame, so its seq no
-// longer matches and the master can tell it is stale rather than trusting it.
+//   byte 1: frameCheck(badge address, seq of the token it answers, byte 0)
+// The seq is never sent back, only folded into the check. A badge that missed
+// its token still holds the previous frame, computed with the previous seq, so
+// it fails the check exactly like a corrupted byte does - and the master keeps
+// its last good state in both cases. An idle SAMD slave answers 0xFF 0xFF,
+// which the check also rejects (barring a 1-in-256 coincidence per read).
 #define FRAME_LEN 2
 #define FRAME_PAD_BITS 0x3F
 // The badge has a baseline. Until it does it measures nothing and reports no
@@ -56,3 +61,33 @@ enum : uint8_t
 // does the capo substitution, so it can tell a real hand on the neck from a
 // clamped capo.
 #define FRAME_STATUS_CAPO 0x80
+
+// CRC-8, polynomial 0x07, initial value 0xFF.
+inline uint8_t crc8(const uint8_t *data, uint8_t len, uint8_t crc = 0xFF)
+{
+    while (len--)
+    {
+        crc ^= *data++;
+        for (uint8_t b = 0; b < 8; b++)
+        {
+            crc = (crc & 0x80) ? (uint8_t)((crc << 1) ^ 0x07) : (uint8_t)(crc << 1);
+        }
+    }
+    return crc;
+}
+
+inline uint8_t frameCheck(uint8_t addr, uint8_t seq, uint8_t b0)
+{
+    uint8_t data[3] = {addr, seq, b0};
+    return crc8(data, sizeof(data));
+}
+
+// The answer to a read after CMD_DEBUG, all little-endian:
+//   0..11  raw reading, uint16 per pad
+//   12..23 baseline, uint16 per pad
+//   24     on mask      25 negative mask
+//   26..27 pads re-baselined since boot
+//   28..29 last scan time, us
+//   30..31 last calibration time, ms
+//   32     crc8 of bytes 0..31, seeded with the badge address
+#define DEBUG_LEN 33
