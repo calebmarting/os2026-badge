@@ -14,7 +14,7 @@ notes than voices. Standard library only, so PlatformIO's Python can run it.
 Manifest fields per song:
     name         console name ("song NAME")
     trigger      capo-button taps that start it, as fret IDs, e.g. [6, 6, 6]
-    voices       4..6
+    voices       1..12 - one per badge at 12, pairs at 6, threes at 4
     midi         file in songs/ (skipped with a warning if it is missing)
     tracks, bpm  inline alternative to midi
     transpose    semitones, applied first
@@ -182,8 +182,8 @@ def allocate(notes, voices):
 
 def song_events(song, songs_dir):
     voices = int(song.get("voices", 6))
-    if not 1 <= voices <= 6:
-        raise ValueError("%s: voices must be 1..6" % song["name"])
+    if not 1 <= voices <= 12:
+        raise ValueError("%s: voices must be 1..12" % song["name"])
     if "midi" in song:
         path = os.path.join(songs_dir, song["midi"])
         if not os.path.exists(path):

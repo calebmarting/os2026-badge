@@ -330,7 +330,8 @@ Tapping fret badges' **capo buttons** in a song's trigger sequence, within
 master turns off the capos the taps switched on. **A tap of the master's
 button stops it.** While a song plays, the master stops handing out scan tokens
 and owns the bus. Each voice is played by a group of badges, split the same way
-strings are (6 voices = pairs, 4 = threes), and every fret badge blinks.
+strings are (12 voices = one badge each, 6 = pairs, 4 = threes), and every
+fret badge blinks.
 
 | Song | Trigger | |
 |---|---|---|
@@ -344,7 +345,8 @@ committed). An entry takes either a `midi` file in `songs/` or inline `tracks`
 (`NOTE:BEATS` tokens, one string per voice, `R` = rest). The other fields:
 
 - `trigger`: the capo-tap sequence, as fret IDs.
-- `voices`: 1–6.
+- `voices`: 1–12. At 12, every badge plays its own voice. Fewer voices
+  share badges (6 = pairs, 4 = threes), so each one is louder.
 - `transpose`: in semitones.
 - `min_note` / `max_note`: notes outside this range are moved by octaves, to
   keep them where the piezo can play them (default 52–100, E3–E7).

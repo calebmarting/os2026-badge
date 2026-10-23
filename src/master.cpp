@@ -1127,7 +1127,7 @@ static void handleCommand(char *line)
 static const Song *song = nullptr;
 static uint16_t songIndex = 0;
 static uint32_t songNextMs = 0;
-static uint8_t songSounding = 0; // bit v = voice v has a note on
+static uint16_t songSounding = 0; // bit v = voice v has a note on
 
 // The latest capo-button taps, oldest first, for spotting a song's trigger.
 #define CAPO_TAP_HISTORY 8
@@ -1260,11 +1260,11 @@ static void serviceSong()
             playVoice(e.voice, songNoteHz(e.note));
             if (e.note)
             {
-                songSounding |= (1 << e.voice);
+                songSounding |= (1u << e.voice);
             }
             else
             {
-                songSounding &= ~(1 << e.voice);
+                songSounding &= ~(1u << e.voice);
             }
         }
         if (++songIndex >= song->eventCount)
@@ -1274,8 +1274,10 @@ static void serviceSong()
         }
         songNextMs += song->events[songIndex].deltaMs;
     }
-    // The master's own LEDs show which voices are sounding.
-    updatePlayLeds(songSounding, songSounding != 0);
+    // The master's own LEDs show which voices are sounding: its 6 pad LEDs,
+    // with voices 7-12 folded onto the same six.
+    uint8_t shown = (songSounding | (songSounding >> 6)) & 0x3F;
+    updatePlayLeds(shown, songSounding != 0);
 }
 
 static void recordCapoTap(uint8_t id)

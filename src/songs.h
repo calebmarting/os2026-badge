@@ -35,7 +35,7 @@ extern const uint8_t kSongCount;
 uint16_t songNoteHz(uint8_t note);
 
 // Badges split into `voices` consecutive groups, the same way the strings are
-// shared out: 6 voices give pairs, 4 give threes.
+// shared out: 12 voices give each badge its own, 6 give pairs, 4 give threes.
 uint8_t songVoiceForBadge(const Song *song, uint8_t badgeId);
 
 const Song *songFind(const char *name);
