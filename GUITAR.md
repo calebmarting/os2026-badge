@@ -326,7 +326,7 @@ negatives, try `set negmode 0`. Either way, the logs show which.
 ## Easter-egg songs
 
 Tapping fret badges' **capo buttons** in a song's trigger sequence, within
-`SONG_TRIGGER_WINDOW_MS` (3 s) from first tap to last, plays that song. The
+`SONG_TRIGGER_WINDOW_MS` (6 s) from first tap to last, plays that song. The
 master turns off the capos the taps switched on. **A tap of the master's
 button stops it.** While a song plays, the master stops handing out scan tokens
 and owns the bus. Each voice is played by a group of badges, split the same way
