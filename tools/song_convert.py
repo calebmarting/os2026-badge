@@ -66,8 +66,9 @@ DRUM_SOUNDS = [
     ("snare", 1500, 1300, 90),
     ("closed hat", 6500, 2500, 25),
     ("open hat", 6500, 2500, 140),
-    ("crash", 5000, 3500, 350),
-    ("ride", 5500, 1200, 160),
+    # Kept clear of the ~4 kHz resonance: a long burst across it rings shrill.
+    ("crash", 9000, 2500, 380),
+    ("ride", 5500, 1200, 140),
     ("low tom", 230, 40, 110),
     ("high tom", 340, 50, 100),
     ("clap", 1800, 1500, 45),
