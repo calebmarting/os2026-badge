@@ -64,11 +64,12 @@ DRUM_SOUNDS = [
     # name, center Hz, spread Hz, ms
     ("kick", 160, 60, 70),
     ("snare", 1500, 1300, 90),
-    ("closed hat", 6500, 2500, 25),
-    ("open hat", 6500, 2500, 140),
-    # Kept clear of the ~4 kHz resonance: a long burst across it rings shrill.
+    # Hats and cymbals sit clear of the piezo's ~4 kHz resonance: a burst
+    # across it rings shrill instead of hissing.
+    ("closed hat", 7500, 2000, 25),
+    ("open hat", 7500, 2000, 140),
     ("crash", 9000, 2500, 380),
-    ("ride", 5500, 1200, 140),
+    ("ride", 7500, 1500, 140),
     ("low tom", 230, 40, 110),
     ("high tom", 340, 50, 100),
     ("clap", 1800, 1500, 45),
