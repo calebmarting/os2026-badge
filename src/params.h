@@ -64,6 +64,9 @@ struct Params
     // Master only: kHz for command-then-read blocks (debug, OTA status),
     // 0 = the normal 100 kHz. Scans always run at 100 kHz.
     uint8_t readKhz;
+    // Master only: all but this many strings held counts as muting every
+    // string. 0 = off.
+    uint8_t muteTolerance;
 };
 
 extern Params params;

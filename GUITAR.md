@@ -240,6 +240,7 @@ until power-off. Copy values you settle on back into the header. Settings marked
 | `BUS_READ_KHZ` | `readkhz` | 0 | bit rate for the long debug/status reads, 16..100 kHz; 0 = 100 kHz. Scans are always 100 kHz |
 | `STRUM_READ_EVERY` | `strumevery` | 2 | extra strum-pad read after every N fret badges, 0 = once a cycle |
 | `MUTE_LOCKOUT_MS` | `mutelock` | 75 | after a mute is let go, a touch starting this soon is a bounce and cannot pluck |
+| `MUTE_TOLERANCE` | `mutetol` | 1 | all but this many strings held mutes every string and their releases cannot pluck; 0 = off, at least 2 held |
 | `REALISTIC_STRUM` | `realistic` | 1 | 1 = a fret change stops a ringing note; 0 = ringing mode (master's left eye lit). Triple-tap the master to switch |
 | `FRET_CHANGE_GRACE_MS` | `fretgrace` | 30 | how long a fret change must last before it stops a note |
 | `ATTRACT_IDLE_SECONDS` | `attract` | 10 | idle seconds before the LEDs twinkle, 0 = never |

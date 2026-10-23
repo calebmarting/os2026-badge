@@ -520,6 +520,28 @@ static void updateStrum()
 
         padWasDown[s] = down;
     }
+
+    // A palm laid across the strings rarely lands on every pad. With all but
+    // muteTolerance strings held, treat it as muting the lot: silence the ones
+    // it missed too, and mark every held string as a mute so lifting the palm
+    // cannot pluck - however briefly it was down. At least two strings must be
+    // held, so a tolerance as wide as the instrument cannot fire on one pad.
+    uint8_t held = 0;
+    for (uint8_t s = 0; s < inst->stringCount; s++)
+    {
+        held += (mask >> s) & 1;
+    }
+    if (params.muteTolerance > 0 && held >= 2 && held + params.muteTolerance >= inst->stringCount)
+    {
+        for (uint8_t s = 0; s < inst->stringCount; s++)
+        {
+            setStringFreq(s, 0);
+            if (mask & (1 << s))
+            {
+                pressIsMuteBounce[s] = true;
+            }
+        }
+    }
 }
 
 static void updateSustain()

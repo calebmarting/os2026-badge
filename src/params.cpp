@@ -28,6 +28,7 @@ Params params = {
     BUS_SDA_HOLD,
     BUS_INACTOUT,
     BUS_READ_KHZ,
+    MUTE_TOLERANCE,
 };
 
 // Order is the wire index - append only, never reorder.
@@ -57,6 +58,7 @@ static const ParamInfo kParams[] = {
     {"sdahold", 0, 3, false},
     {"inactout", 0, 3, false},
     {"readkhz", 0, 100, false},
+    {"mutetol", 0, 5, false},
 };
 #define NUM_PARAMS (sizeof(kParams) / sizeof(kParams[0]))
 
@@ -111,6 +113,7 @@ int16_t paramGet(uint8_t index)
     case 22: return params.sdaHold;
     case 23: return params.inactOut;
     case 24: return params.readKhz;
+    case 25: return params.muteTolerance;
     default: return 0;
     }
 }
@@ -148,6 +151,7 @@ bool paramSet(uint8_t index, int16_t value)
     case 22: params.sdaHold = value; break;
     case 23: params.inactOut = value; break;
     case 24: params.readKhz = (value != 0 && value < 16) ? 16 : value; break;
+    case 25: params.muteTolerance = value; break;
     }
     return true;
 }

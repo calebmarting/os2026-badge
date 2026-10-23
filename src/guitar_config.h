@@ -143,6 +143,11 @@ inline uint8_t wireAddress(uint8_t badgeId) { return I2C_ADDR_BASE + badgeId; }
 // After a mute is let go of, a touch that starts within this window is the
 // finger bouncing off the pad, not a new strum: its release stays silent.
 #define MUTE_LOCKOUT_MS 75
+// A palm mute that misses a pad or two still mutes everything: with all but
+// MUTE_TOLERANCE strings held (1 = 5 of 6 on the guitar, 3 of 4 on the
+// ukulele), every string is silenced and lifting the palm cannot pluck.
+// 0 = off; at least two strings must be held either way.
+#define MUTE_TOLERANCE 1
 // 1 = realistic strumming: a strummed note rings for SUSTAIN_MS, but changing
 // that string's fret stops it and it has to be strummed again. 0 = ringing
 // mode, where notes keep sounding and follow the frets (PITCH_TRACKS_FRETS),

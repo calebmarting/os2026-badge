@@ -103,6 +103,9 @@ it damps the note. What happens when you let go depends on how long you held it:
 - **Hold longer** - it stays muted. This is your palm mute. For `MUTE_LOCKOUT_MS`
   (75 ms) after you let go, the pad ignores a bounce of your finger, so lifting
   off a mute cannot accidentally pluck.
+- **Palm across the strings** - holding all but `MUTE_TOLERANCE` strings (by
+  default 5 of 6, or 3 of 4 on the ukulele) mutes every string, including the
+  one your palm missed, and lifting off stays silent however quick it was.
 
 A note rings for `SUSTAIN_MS` (default 3 s) and then silences itself. What
 happens if you change the chord while it rings depends on the strum mode -
@@ -204,6 +207,7 @@ The playing-feel settings stay in `guitar_config.h`:
 | `UKE_OCTAVE_SHIFT` | 0 | ukulele plays at concert pitch |
 | `REALISTIC_STRUM` | 1 | 1 = a fret change stops a ringing note; 0 = ringing mode |
 | `MUTE_LOCKOUT_MS` | 75 | after a mute, a re-touch this soon cannot pluck |
+| `MUTE_TOLERANCE` | 1 | all but this many strings held mutes every string; 0 = off |
 | `FRET_CHANGE_GRACE_MS` | 30 | a fret change must last this long to stop a note |
 | `PITCH_TRACKS_FRETS` | 1 | ringing mode: 0 latches pitch at the strum, losing hammer-ons |
 | `MASTER_DEBUG` | 0 | 1 prints resolved frets and pitches over serial |
