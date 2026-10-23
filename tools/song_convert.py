@@ -31,8 +31,16 @@ Manifest fields per song:
     tempo        playback speed factor, 1.0 = as written
     max_seconds  cut the song off here, 0 = whole song
     gap_ms       silence before each note's end, so repeated notes re-sound
-    channels     MIDI channels to keep (1-16), default all but drums (10)
+    channels     MIDI channels to play as tones (1-16); overrides auto_channels
+    auto_channels  true: keep only the `voices` busiest tone channels
+    rank_by      what "busiest" means: "time" (total sounding time, default)
+                 or "notes" (note count)
     drum_channels  channels that are drums, default [10] (General MIDI)
+
+To see what is in a MIDI file - each channel's instrument, note count and
+sounding time, and which ones a song keeps:
+
+    python tools/song_convert.py --channels SONGNAME
 """
 
 import json
@@ -65,6 +73,26 @@ DRUM_SOUNDS = [
     ("clap", 1800, 1500, 45),
 ]
 DRUM_INDEX = {name: i for i, (name, _, _, _) in enumerate(DRUM_SOUNDS)}
+
+# General MIDI program names, so the channel listing can say what each is.
+GM_PROGRAMS = (
+    "Acoustic Grand Piano|Bright Piano|Electric Grand|Honky-tonk|E.Piano 1|E.Piano 2|Harpsichord|Clavinet|"
+    "Celesta|Glockenspiel|Music Box|Vibraphone|Marimba|Xylophone|Tubular Bells|Dulcimer|"
+    "Drawbar Organ|Percussive Organ|Rock Organ|Church Organ|Reed Organ|Accordion|Harmonica|Bandoneon|"
+    "Nylon Guitar|Steel Guitar|Jazz Guitar|Clean Guitar|Muted Guitar|Overdrive Guitar|Distortion Guitar|"
+    "Guitar Harmonics|Acoustic Bass|Finger Bass|Pick Bass|Fretless Bass|Slap Bass 1|Slap Bass 2|"
+    "Synth Bass 1|Synth Bass 2|Violin|Viola|Cello|Contrabass|Tremolo Strings|Pizzicato Strings|"
+    "Harp|Timpani|String Ensemble 1|String Ensemble 2|Synth Strings 1|Synth Strings 2|Choir Aahs|"
+    "Voice Oohs|Synth Voice|Orchestra Hit|Trumpet|Trombone|Tuba|Muted Trumpet|French Horn|Brass Section|"
+    "Synth Brass 1|Synth Brass 2|Soprano Sax|Alto Sax|Tenor Sax|Baritone Sax|Oboe|English Horn|Bassoon|"
+    "Clarinet|Piccolo|Flute|Recorder|Pan Flute|Blown Bottle|Shakuhachi|Whistle|Ocarina|Square Lead|"
+    "Saw Lead|Calliope Lead|Chiff Lead|Charang Lead|Voice Lead|Fifths Lead|Bass+Lead|New Age Pad|"
+    "Warm Pad|Polysynth Pad|Choir Pad|Bowed Pad|Metallic Pad|Halo Pad|Sweep Pad|Rain FX|Soundtrack FX|"
+    "Crystal FX|Atmosphere FX|Brightness FX|Goblins FX|Echoes FX|Sci-fi FX|Sitar|Banjo|Shamisen|Koto|"
+    "Kalimba|Bagpipe|Fiddle|Shanai|Tinkle Bell|Agogo|Steel Drums|Woodblock|Taiko Drum|Melodic Tom|"
+    "Synth Drum|Reverse Cymbal|Guitar Fret Noise|Breath Noise|Seashore|Bird Tweet|Telephone Ring|"
+    "Helicopter|Applause|Gunshot"
+).split("|")
 
 # General MIDI percussion key -> drum sound.
 GM_DRUMS = {}
@@ -122,9 +150,10 @@ def read_varlen(data, i):
             return value, i
 
 
-def notes_from_midi(path, channels, drum_channels):
-    """Returns (notes, hits): notes as (start ms, end ms, note), drum hits from
-    drum_channels as (ms, drum sound index)."""
+def notes_from_midi(path, drum_channels):
+    """Returns (notes, hits, programs): notes as (start ms, end ms, note,
+    channel 1-16), drum hits from drum_channels as (ms, drum sound index), and
+    the first program (instrument) set on each channel."""
     data = open(path, "rb").read()
     if data[:4] != b"MThd":
         raise ValueError("%s is not a standard MIDI file" % path)
@@ -134,6 +163,7 @@ def notes_from_midi(path, channels, drum_channels):
         raise ValueError("%s uses SMPTE timing, which is not supported" % path)
 
     tempos = []   # (tick, microseconds per quarter note)
+    programs = {}  # channel 1-16 -> first program number
     raw = []      # (tick, is_on, channel, note)
     i = 8 + header_len
     for _ in range(track_count):
@@ -167,6 +197,8 @@ def notes_from_midi(path, channels, drum_channels):
                 j += 1
             kind, channel = status & 0xF0, status & 0x0F
             if kind in (0xC0, 0xD0):        # one data byte
+                if kind == 0xC0:
+                    programs.setdefault(channel + 1, data[j])
                 j += 1
                 continue
             note, velocity = data[j], data[j + 1]
@@ -197,14 +229,35 @@ def notes_from_midi(path, channels, drum_channels):
             if is_on:
                 hits.append((tick_to_ms(tick), GM_DRUMS.get(note, DRUM_INDEX["clap"])))
             continue
-        if channels is not None and channel + 1 not in channels:
-            continue
         if is_on:
             held.setdefault((channel, note), []).append(tick)
         elif held.get((channel, note)):
             start = held[(channel, note)].pop(0)
-            notes.append((tick_to_ms(start), tick_to_ms(tick), note))
-    return notes, hits
+            notes.append((tick_to_ms(start), tick_to_ms(tick), note, channel + 1))
+    return notes, hits, programs
+
+
+def channel_usage(notes):
+    """channel -> (note count, total sounding ms)."""
+    usage = {}
+    for start, end, _, channel in notes:
+        count, ms = usage.get(channel, (0, 0.0))
+        usage[channel] = (count + 1, ms + (end - start))
+    return usage
+
+
+def chosen_channels(song, usage):
+    """The tone channels a song keeps, or None for all of them."""
+    if "channels" in song:
+        return set(int(c) for c in song["channels"])
+    if song.get("auto_channels"):
+        rank_by = song.get("rank_by", "time")
+        if rank_by not in ("time", "notes"):
+            raise ValueError('%s: rank_by must be "time" or "notes"' % song["name"])
+        key = (lambda c: usage[c][1]) if rank_by == "time" else (lambda c: usage[c][0])
+        ranked = sorted(usage, key=key, reverse=True)
+        return set(ranked[:int(song.get("voices", 6))])
+    return None
 
 
 def allocate(notes, voices):
@@ -244,9 +297,14 @@ def song_events(song, songs_dir):
         path = os.path.join(songs_dir, song["midi"])
         if not os.path.exists(path):
             return None
-        notes, hits = notes_from_midi(path, song.get("channels"), song.get("drum_channels", [10]))
+        notes, hits, _ = notes_from_midi(path, song.get("drum_channels", [10]))
+        keep = chosen_channels(song, channel_usage(notes))
+        if keep is not None:
+            notes = [n for n in notes if n[3] in keep]
+        notes = [n[:3] for n in notes]
     else:
         notes = notes_from_tracks(song["tracks"], float(song.get("bpm", 120)))
+        keep = None
 
     transpose = int(song.get("transpose", 0))
     playable_low = int(song.get("playable_min", PLAYABLE_MIN))
@@ -303,6 +361,8 @@ def song_events(song, songs_dir):
         now = ms
 
     report = []
+    if keep is not None:
+        report.append("channels %s" % ",".join(str(c) for c in sorted(keep)))
     if moved:
         report.append("%d notes moved into %d..%d" % (moved, low, high))
     if drums:
@@ -489,6 +549,34 @@ def build(manifest_path, out_path):
         f.write(text)
 
 
+def list_channels(manifest_path, name):
+    """Prints every channel of a song's MIDI file, busiest first."""
+    songs = [s for s in load_manifest(manifest_path) if s["name"] == name]
+    if not songs or "midi" not in songs[0]:
+        sys.exit("no MIDI song called %s in %s" % (name, manifest_path))
+    song = songs[0]
+    path = os.path.join(os.path.dirname(manifest_path), song["midi"])
+    drum_channels = song.get("drum_channels", [10])
+    notes, hits, programs = notes_from_midi(path, drum_channels)
+    usage = channel_usage(notes)
+    keep = chosen_channels(song, usage)
+
+    print("%s (%s), %d voices:" % (name, song["midi"], int(song.get("voices", 6))))
+    print("  ch  instrument            notes   seconds")
+    for channel in sorted(usage, key=lambda c: usage[c][1], reverse=True):
+        count, ms = usage[channel]
+        program = programs.get(channel)
+        instrument = GM_PROGRAMS[program] if program is not None else "(no program)"
+        kept = keep is None or channel in keep
+        print("  %2d  %-20s %6d  %8.1f  %s" % (channel, instrument, count, ms / 1000.0, "kept" if kept else "-"))
+    for channel in drum_channels:
+        print("  %2d  %-20s %6d  %8s  drums" % (channel, "(drum kit)", len(hits), ""))
+
+
 if __name__ == "__main__":
     here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    build(os.path.join(here, "songs", "songs.json"), os.path.join(here, "src", "songs_data.cpp"))
+    manifest = os.path.join(here, "songs", "songs.json")
+    if len(sys.argv) == 3 and sys.argv[1] == "--channels":
+        list_channels(manifest, sys.argv[2])
+    else:
+        build(manifest, os.path.join(here, "src", "songs_data.cpp"))

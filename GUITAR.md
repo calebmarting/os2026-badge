@@ -363,13 +363,29 @@ committed). An entry takes either a `midi` file in `songs/` or inline `tracks`
   build reports how many notes were moved.
 - `tempo`, `max_seconds`, `gap_ms`: speed factor, length limit, and the gap
   that lets repeated notes sound again.
-- `channels`: MIDI channels to keep for tones. By default, all of them.
+- `channels`: the MIDI channels to play as tones, e.g. `[3, 7, 9]`. By
+  default, all of them. When given, it overrides `auto_channels`.
+- `auto_channels: true`: keep only the busiest tone channels, as many as the
+  song has `voices`. `rank_by` decides what busiest means: `"time"`, the total
+  sounding time (default), or `"notes"`, the note count. The build line names
+  the channels it kept.
 - `drum_channels` (default `[10]`, the General MIDI drum channel): these
   channels play drums instead of tones.
 - `drums`: how many piezos play drums. The default is 2 if the song has any
   drum notes, otherwise 0. They're the highest-numbered badges (10 and 11),
   never the master, and they're taken out of the pool chords share. `0`
   drops the drums.
+
+**What is in a MIDI file?** This lists every channel, busiest first, with its
+instrument, note count, sounding time, and whether the song keeps it:
+
+```
+python tools/song_convert.py --channels badapple
+```
+
+Use it to drop noise-effect channels (*Guitar Fret Noise*, *Reverse Cymbal*)
+with `channels`, or to find a drum kit that isn't on channel 10 for
+`drum_channels`.
 
 **Drums** are pseudo white noise. The badge toggles its piezo at random
 intervals around a center pitch for the hit's length, the same idea as
