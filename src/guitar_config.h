@@ -45,8 +45,9 @@
 // PTC acquisition, as Adafruit_FreeTouch enum values.
 // Oversampling: 2 = 4x, 3 = 8x, 4 = 16x, 5 = 32x. FreeTouch divides it back
 // out, so counts - and every threshold above - keep the same scale; more just
-// means less noise and a proportionally longer scan window.
-#define PTC_OVERSAMPLE 4
+// means less noise and a proportionally longer scan window. On the 12-badge
+// neck, 4x gives a ~17 ms cycle against ~30 ms at 16x.
+#define PTC_OVERSAMPLE 2
 // Series resistor: 0 = none, 1 = 20K, 2 = 50K, 3 = 100K.
 #define PTC_RESISTOR 2
 // 0 = fixed frequency. Any other value turns on the PTC's spread spectrum
@@ -60,8 +61,9 @@
 // 0 = all six pads are handed to the PTC for the whole scan.
 // 1 = only the pad being measured is; the other five stay driven LOW, so a
 //     finger resting on one grounds the hand instead of sharing charge with
-//     the pad being read. An experiment - try it if chords drop fingers.
-#define PTC_PAD_ISOLATE 0
+//     the pad being read. On hardware this stopped a ukulele G chord losing
+//     its fret-3 finger when the fret-2 fingers went down.
+#define PTC_PAD_ISOLATE 1
 
 // Samples averaged per pad during calibration.
 #define TOUCH_CAL_SAMPLES 32

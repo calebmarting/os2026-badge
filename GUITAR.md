@@ -60,9 +60,10 @@ One cycle:
   ```
 
   `scan` is the master's own measured 6-pad scan and `window` is what each badge
-  gets. With 16x oversampling (the default) expect the cycle to be well over the
-  10 ms target. The trade-off is direct: `set os 2` (4x) shortens every window
-  about fourfold at the cost of more noise per reading.
+  gets. Measured on the 12-badge neck: 16x gave a 1301 us scan and a 29.9 ms
+  cycle; 4x (now the default) gives 436 us and 17.2 ms. About 725 us per badge
+  is I2C, so this protocol cannot reach 10 ms at 100 kHz whatever the
+  oversampling.
 
 **Missed tokens.** A frame that doesn't arrive or fails its check counts as a
 miss, and the master keeps that badge's last good state. After `STALE_SCANS` (4)
@@ -185,12 +186,12 @@ until power-off. Copy values you settle on back into the header. Settings marked
 | `TOUCH_DRIFT_SHIFT` | `drift` | 6 | idle baseline IIR shift |
 | `TOUCH_MAX_ON_SECONDS` | `maxon` | 30 | re-baseline a pad held this long, 0 = never |
 | `TOUCH_CAL_SAMPLES` | `calsamples` **R** | 32 | samples averaged per pad |
-| `PTC_OVERSAMPLE` | `os` **R** | 4 (16x) | 2 = 4x, 3 = 8x, 4 = 16x, 5 = 32x |
+| `PTC_OVERSAMPLE` | `os` **R** | 2 (4x) | 2 = 4x, 3 = 8x, 4 = 16x, 5 = 32x. Measured cycle: ~17 ms at 4x, ~30 ms at 16x |
 | `PTC_RESISTOR` | `res` **R** | 2 (50K) | 0 none, 1 20K, 2 50K, 3 100K |
 | `PTC_FREQ_MODE` | `freq` **R** | 2 | 0 fixed frequency, anything else spread spectrum |
 | `PTC_FREQ_HOP` | `hop` **R** | 0 | spread-spectrum sample delay, 0..15 |
 | `PTC_HOP_PER_BADGE` | `hopstep` **R** | 0 | delay += this x badge ID, to stagger badges |
-| `PTC_PAD_ISOLATE` | `isolate` **R** | 0 | 1 = only the measured pad is on the PTC, the other five held LOW |
+| `PTC_PAD_ISOLATE` | `isolate` **R** | 1 | only the measured pad is on the PTC, the other five held LOW. 0 = all six for the whole scan |
 | `SCAN_US` | `scanus` | 0 | fixed scan window in us, 0 = derived |
 | `ATTRACT_IDLE_SECONDS` | `attract` | 10 | idle seconds before the LEDs twinkle, 0 = never |
 | `ATTRACT_STEP_MS` | – | 150 | how often each badge reshuffles its LEDs |
