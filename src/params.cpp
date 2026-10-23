@@ -20,6 +20,7 @@ Params params = {
     SCAN_US,
     ATTRACT_IDLE_SECONDS,
     PTC_PAD_ISOLATE,
+    STRUM_READ_EVERY,
 };
 
 // Order is the wire index - append only, never reorder.
@@ -41,6 +42,7 @@ static const ParamInfo kParams[] = {
     {"scanus", 0, 30000, false},
     {"attract", 0, 3600, false},
     {"isolate", 0, 1, true},
+    {"strumevery", 0, 11, false},
 };
 #define NUM_PARAMS (sizeof(kParams) / sizeof(kParams[0]))
 
@@ -87,6 +89,7 @@ int16_t paramGet(uint8_t index)
     case 14: return params.scanUs;
     case 15: return params.attractSeconds;
     case 16: return params.isolate;
+    case 17: return params.strumEvery;
     default: return 0;
     }
 }
@@ -116,6 +119,7 @@ bool paramSet(uint8_t index, int16_t value)
     case 14: params.scanUs = value; break;
     case 15: params.attractSeconds = value; break;
     case 16: params.isolate = value; break;
+    case 17: params.strumEvery = value; break;
     }
     return true;
 }

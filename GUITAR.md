@@ -43,6 +43,11 @@ One cycle:
   `1.25 x that + SCAN_MARGIN_US` (250 us). Every badge runs the same code with the
   same settings, so the master's own scan is a good stand-in. `set scanus N`
   fixes it instead.
+- **Strum reads.** The fret badges are read once a cycle, but the master
+  also reads its own strum pads after every `strumevery` (2) fret badges, so
+  6 times a cycle and ~3.5 ms apart. Each read runs the strum logic straight
+  away. It's still one PTC at a time: the extra reads sit between fret badges'
+  windows. Only the read in the master's own slot may drift its baseline.
 - **Where switching happens.** A fret badge updates its LEDs after its pads are
   back to LOW but *before* it publishes its frame, so the switching stays inside
   its own window. Frequency writes, the master's LEDs and all serial output
@@ -200,6 +205,7 @@ until power-off. Copy values you settle on back into the header. Settings marked
 | `PTC_HOP_PER_BADGE` | `hopstep` **R** | 0 | delay += this x badge ID, to stagger badges |
 | `PTC_PAD_ISOLATE` | `isolate` **R** | 1 | only the measured pad is on the PTC, the other five held LOW. 0 = all six for the whole scan |
 | `SCAN_US` | `scanus` | 0 | fixed scan window in us, 0 = derived |
+| `STRUM_READ_EVERY` | `strumevery` | 2 | extra strum-pad read after every N fret badges, 0 = once a cycle |
 | `ATTRACT_IDLE_SECONDS` | `attract` | 10 | idle seconds before the LEDs twinkle, 0 = never |
 | `ATTRACT_STEP_MS` | – | 150 | how often each badge reshuffles its LEDs |
 | `ATTRACT_ON_PERCENT` | – | 40 | chance each LED is lit per reshuffle |

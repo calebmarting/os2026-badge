@@ -45,6 +45,9 @@ struct Params
     uint16_t attractSeconds;
     // 1 = while one pad is measured, the badge's other pads stay driven LOW.
     uint8_t isolate;
+    // Master only: extra strum-pad reads, one after every this many fret
+    // badges. 0 = only the master's own slot.
+    uint8_t strumEvery;
 };
 
 extern Params params;

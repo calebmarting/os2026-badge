@@ -137,6 +137,12 @@ inline uint8_t wireAddress(uint8_t badgeId) { return I2C_ADDR_BASE + badgeId; }
 // A strum pad held longer than this is a mute-and-hold, not a strum, so
 // releasing it stays silent. Raise it if quick strums are being swallowed.
 #define STRUM_MAX_HOLD_MS 250
+// The master reads its strum pads after every STRUM_READ_EVERY fret badges as
+// well as in its own slot: 2 gives 6 reads per cycle, ~3.5 ms apart, against
+// one per ~17 ms cycle. A quick strum then lasts several reads instead of
+// slipping between two, and registers in ~7 ms. Each extra read costs one
+// scan (~0.45 ms at 4x) on the cycle. 1 = after every badge, 0 = only once.
+#define STRUM_READ_EVERY 2
 // Doubles every pitch per step, per instrument. The piezo resonates near 4 kHz
 // and reproduces a true low E (82 Hz) poorly, so the guitar plays an octave up
 // (164-1319 Hz). The ukulele's 262-880 Hz is already fine at true pitch.

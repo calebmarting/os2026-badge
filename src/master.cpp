@@ -983,6 +983,34 @@ static void handleCommand(char *line)
 // Everything that puts traffic on the bus or switches current - frequency
 // writes, LEDs, serial - happens in the master's slot, after its own pads are
 // back to driven-LOW, so none of it can land inside anyone's measurement.
+// Pads the master has seen held at any read this cycle, so a strum that comes
+// and goes between the extra reads still counts as a touch for ANY_TOUCH.
+static uint8_t ownTouchedThisCycle = 0;
+
+// One read of the master's own strum pads, then the strum logic on it. The
+// fret badges are only read once a cycle, but strums are fast and the strum
+// pads sit far from the fretting hand, so the master reads its own pads
+// several times a cycle - always between fret badges' windows, so it is still
+// the only PTC measuring. Only the read in the master's own slot may drift the
+// baseline, so drift keeps the same pace however often the pads are read.
+// Returns true if the master's pads changed.
+static bool strumRead(bool mayDrift, uint32_t &scanUs)
+{
+    uint8_t before = touchMask();
+    scanUs = touchScan(mayDrift && !anyTouch);
+    if (scanUs > ownScanMaxUs)
+    {
+        ownScanMaxUs = scanUs;
+    }
+    ownTouchedThisCycle |= touchMask();
+
+    // Fret badges answered earlier this cycle, so resolve with what is known
+    // now. Mutes and plucks go out on the bus here - nobody is measuring.
+    resolveFrets();
+    updateStrum();
+    return touchMask() != before;
+}
+
 void masterLoop()
 {
     uint32_t cycleStartUs = micros();
@@ -1005,21 +1033,23 @@ void masterLoop()
     {
         flags |= SCAN_FLAG_ATTRACT;
     }
-    uint8_t ownBefore = touchMask();
     bool changed = false;
+    ownTouchedThisCycle = 0;
+    uint32_t ownUs = 0;
     for (uint8_t id = 1; id < MAX_BADGES; id++)
     {
         changed |= scanFret(id, flags);
+        // An extra strum read after every Nth fret badge. The last one is
+        // skipped: the master's own slot follows straight after.
+        if (params.strumEvery > 0 && id % params.strumEvery == 0 && id + 1 < MAX_BADGES)
+        {
+            changed |= strumRead(false, ownUs);
+        }
     }
 
     // The master's own window. The last fret badge has already answered, so
     // its scan is done and the neck is quiet.
-    uint32_t ownUs = touchScan(!anyTouch);
-    if (ownUs > ownScanMaxUs)
-    {
-        ownScanMaxUs = ownUs;
-    }
-    changed |= touchMask() != ownBefore;
+    changed |= strumRead(true, ownUs);
 
 #if TOUCH_DEBUG
     static uint32_t lastDebugMs = 0;
@@ -1032,7 +1062,7 @@ void masterLoop()
 
     // Measured pads only: a capo is a clamp, not a hand, and must not freeze
     // every baseline on the neck for as long as it is on.
-    anyTouch = touchMask() != 0;
+    anyTouch = ownTouchedThisCycle != 0;
     for (uint8_t id = 1; id < MAX_BADGES; id++)
     {
         anyTouch |= frets[id].fresh && frets[id].pads != 0;
@@ -1055,8 +1085,6 @@ void masterLoop()
         masterNoteActivity(); // "set attract 0" while twinkling
     }
 
-    resolveFrets();
-    updateStrum();
     updateSustain();
 
     bool sounding = false;
