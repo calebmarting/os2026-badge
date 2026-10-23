@@ -35,6 +35,9 @@ enum : uint8_t
     // [on] - set this badge's capo. The master turns off the capos that were
     // tapped to trigger an easter-egg song.
     CMD_CAPO = 0x57,
+    // [center Hz u16, spread Hz u16, ms u16] - a burst of pseudo white noise
+    // on this badge's piezo: a drum hit in a song. CMD_FREQ cuts it short.
+    CMD_NOISE = 0x58,
 
     // Firmware update, see ota.h.
     // [size u32, crc32 u32] general call - stop playing, erase staging.

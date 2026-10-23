@@ -45,6 +45,8 @@ static bool debugPrint = TOUCH_DEBUG;
 
 static volatile uint16_t pendingFreq = 0;
 static volatile bool freqDirty = false;
+static volatile uint16_t noiseArgs[3];
+static volatile bool noisePending = false;
 static uint16_t activeFreq = 0;
 
 // From the last token. Decides only how this badge lights its slider - the
@@ -101,6 +103,16 @@ static void onReceive(int count)
         else if (cmd == CMD_PROMPT && count >= 2)
         {
             promptMode = Wire.read();
+        }
+        else if (cmd == CMD_NOISE && count >= 7)
+        {
+            for (uint8_t i = 0; i < 3; i++)
+            {
+                uint8_t lo = Wire.read();
+                uint8_t hi = Wire.read();
+                noiseArgs[i] = (uint16_t)lo | ((uint16_t)hi << 8);
+            }
+            noisePending = true;
         }
         else if (cmd == CMD_CAPO && count >= 2)
         {
@@ -277,6 +289,19 @@ static void handleCommand(const char *line)
 
 void slaveLoop()
 {
+    if (noisePending)
+    {
+        noInterrupts();
+        uint16_t center = noiseArgs[0];
+        uint16_t spread = noiseArgs[1];
+        uint16_t ms = noiseArgs[2];
+        noisePending = false;
+        interrupts();
+        activeFreq = 0;
+        noiseStart(center, spread, ms);
+    }
+    noiseService();
+
     char line[48];
     if (consoleReadLine(line, sizeof(line)))
     {
@@ -337,7 +362,9 @@ void slaveLoop()
         freqDirty = false;
         interrupts();
 
-        if (freq != activeFreq)
+        // A pitch, even silence, always wins over a drum hit still ringing.
+        noiseStop();
+        if (freq != activeFreq || freq > 0)
         {
             activeFreq = freq;
             if (activeFreq > 0)

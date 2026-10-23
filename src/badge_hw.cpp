@@ -337,6 +337,63 @@ void endAttractLeds()
     digitalWrite(LED_ACCEL, LOW);
 }
 
+static bool noiseOn = false;
+static bool noiseLevel = false;
+static uint32_t noiseEndMs = 0;
+static uint32_t noiseNextUs = 0;
+static uint32_t noiseMinHalfUs = 0;
+static uint32_t noiseSpanUs = 0;
+static uint32_t noiseRng = 0x9E3779B9;
+
+void noiseStart(uint16_t centerHz, uint16_t spreadHz, uint16_t durationMs)
+{
+    noTone(BUZZER_PIN);
+    uint32_t low = centerHz > spreadHz + 20 ? centerHz - spreadHz : 20;
+    uint32_t high = (uint32_t)centerHz + spreadHz;
+    // A higher frequency is a shorter half-period, so the bounds swap over.
+    noiseMinHalfUs = 500000UL / high;
+    noiseSpanUs = 500000UL / low - noiseMinHalfUs + 1;
+    noiseRng ^= micros();
+    noiseEndMs = millis() + durationMs;
+    noiseNextUs = micros();
+    noiseOn = true;
+}
+
+void noiseService()
+{
+    if (!noiseOn)
+    {
+        return;
+    }
+    if ((int32_t)(millis() - noiseEndMs) >= 0)
+    {
+        noiseStop();
+        return;
+    }
+    uint32_t now = micros();
+    if ((int32_t)(now - noiseNextUs) < 0)
+    {
+        return;
+    }
+    noiseLevel = !noiseLevel;
+    digitalWrite(BUZZER_PIN, noiseLevel ? HIGH : LOW);
+    // xorshift32: random() is too slow to call this often.
+    noiseRng ^= noiseRng << 13;
+    noiseRng ^= noiseRng >> 17;
+    noiseRng ^= noiseRng << 5;
+    noiseNextUs = now + noiseMinHalfUs + noiseRng % noiseSpanUs;
+}
+
+void noiseStop()
+{
+    if (noiseOn)
+    {
+        noiseOn = false;
+        noiseLevel = false;
+        digitalWrite(BUZZER_PIN, LOW);
+    }
+}
+
 void updateUkePlayLeds(uint8_t padMask, bool sounding)
 {
     uint8_t strings = groupPads(&kUkulele, padMask);

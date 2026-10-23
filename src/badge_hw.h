@@ -76,6 +76,14 @@ void updateAttractLeds();
 // displays never write them, so leaving attract mode has to.
 void endAttractLeds();
 
+// Pseudo white noise on the piezo: it is toggled at random intervals between
+// centerHz - spreadHz and centerHz + spreadHz for durationMs, a drum hit.
+// Non-blocking: noiseService() must run every loop to make the sound. Stops
+// any tone; noiseStop() ends it early.
+void noiseStart(uint16_t centerHz, uint16_t spreadHz, uint16_t durationMs);
+void noiseService();
+void noiseStop();
+
 // The whole slider lit: this badge is acting as a capo. Deliberately the same
 // in both instruments - in ukulele mode the middle LED is otherwise impossible
 // to light, so a full slider is unmistakably a capo rather than a chord.

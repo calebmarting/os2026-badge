@@ -15,9 +15,25 @@ struct __attribute__((packed)) SongEvent
     // converter decides who plays what - including chords that borrow
     // piezos from other notes - so playback just does as it is told.
     uint16_t piezos;
-    // MIDI note number for those piezos, 0 = they go silent.
+    // MIDI note number for those piezos, 0 = they go silent, or from
+    // SONG_DRUM_BASE up a drum hit: kSongDrums[note - SONG_DRUM_BASE].
     uint8_t note;
 };
+
+#define SONG_DRUM_BASE 128
+
+// A drum is a burst of pseudo white noise: the piezo toggles at random
+// intervals between centerHz - spreadHz and centerHz + spreadHz for ms.
+// The table is generated with the songs (tools/song_convert.py DRUM_SOUNDS).
+struct SongDrum
+{
+    uint16_t centerHz;
+    uint16_t spreadHz;
+    uint16_t ms;
+};
+
+extern const SongDrum kSongDrums[];
+extern const uint8_t kSongDrumCount;
 
 struct Song
 {

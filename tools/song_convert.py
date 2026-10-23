@@ -23,10 +23,16 @@ Manifest fields per song:
     tracks, bpm  inline alternative to midi
     transpose    semitones, applied first
     min_note, max_note   MIDI note range; notes outside are moved by octaves
+    playable_min, playable_max   the piezo's own limits (default 50..108,
+                 ~147 Hz..4.2 kHz): a note outside them would not really sound,
+                 so it is moved by octaves until it fits, whatever min/max say
+    drums        piezos given to the drum channel (default 2 if the song has
+                 drum notes, else 0); 0 drops the drums
     tempo        playback speed factor, 1.0 = as written
     max_seconds  cut the song off here, 0 = whole song
     gap_ms       silence before each note's end, so repeated notes re-sound
     channels     MIDI channels to keep (1-16), default all but drums (10)
+    drum_channels  channels that are drums, default [10] (General MIDI)
 """
 
 import json
@@ -37,6 +43,44 @@ import sys
 
 NOTE_BASE = {"C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11}
 PIEZOS = 12             # one per badge; an event with no piezos only waits
+PLAYABLE_MIN = 50       # D3, ~147 Hz: below this the piezo barely sounds
+PLAYABLE_MAX = 108      # C8, ~4.2 kHz
+DRUM_BASE = 128         # event note values from here up are drum hits
+
+# Pseudo white noise per drum: the piezo is toggled at random intervals
+# between center-spread and center+spread Hz for ms milliseconds (the same
+# trick as examples/drum). Generated into the firmware, so this table is the
+# only place these live. The piezo resonates near 4 kHz and says little below
+# ~150 Hz, so "low" drums sit higher than their real pitch.
+DRUM_SOUNDS = [
+    # name, center Hz, spread Hz, ms
+    ("kick", 160, 60, 70),
+    ("snare", 1500, 1300, 90),
+    ("closed hat", 6500, 2500, 25),
+    ("open hat", 6500, 2500, 140),
+    ("crash", 5000, 3500, 350),
+    ("ride", 5500, 1200, 160),
+    ("low tom", 230, 40, 110),
+    ("high tom", 340, 50, 100),
+    ("clap", 1800, 1500, 45),
+]
+DRUM_INDEX = {name: i for i, (name, _, _, _) in enumerate(DRUM_SOUNDS)}
+
+# General MIDI percussion key -> drum sound.
+GM_DRUMS = {}
+for keys, name in (
+    ((35, 36), "kick"),
+    ((38, 40), "snare"),
+    ((37, 39, 54, 56, 75, 76, 77), "clap"),
+    ((42, 44), "closed hat"),
+    ((46,), "open hat"),
+    ((49, 52, 55, 57), "crash"),
+    ((51, 53, 59), "ride"),
+    ((41, 43, 45, 61, 64), "low tom"),
+    ((47, 48, 50, 60, 62, 63), "high tom"),
+):
+    for key in keys:
+        GM_DRUMS[key] = DRUM_INDEX[name]
 MAX_DELTA = 0xFFFF      # ms per event delta (uint16 in the firmware)
 WARN_BYTES = 30000
 
@@ -78,7 +122,9 @@ def read_varlen(data, i):
             return value, i
 
 
-def notes_from_midi(path, channels):
+def notes_from_midi(path, channels, drum_channels):
+    """Returns (notes, hits): notes as (start ms, end ms, note), drum hits from
+    drum_channels as (ms, drum sound index)."""
     data = open(path, "rb").read()
     if data[:4] != b"MThd":
         raise ValueError("%s is not a standard MIDI file" % path)
@@ -145,17 +191,20 @@ def notes_from_midi(path, channels):
 
     held = {}
     notes = []
+    hits = []
     for tick, is_on, channel, note in sorted(raw, key=lambda e: (e[0], e[1])):
-        if channels is not None and channel + 1 not in channels:
+        if channel + 1 in drum_channels:
+            if is_on:
+                hits.append((tick_to_ms(tick), GM_DRUMS.get(note, DRUM_INDEX["clap"])))
             continue
-        if channels is None and channel == 9:   # General MIDI drums
+        if channels is not None and channel + 1 not in channels:
             continue
         if is_on:
             held.setdefault((channel, note), []).append(tick)
         elif held.get((channel, note)):
             start = held[(channel, note)].pop(0)
             notes.append((tick_to_ms(start), tick_to_ms(tick), note))
-    return notes
+    return notes, hits
 
 
 def allocate(notes, voices):
@@ -186,42 +235,61 @@ def allocate(notes, voices):
 
 
 def song_events(song, songs_dir):
+    """Returns (voices, events, report) or None if the MIDI file is missing."""
     voices = int(song.get("voices", 6))
     if not 1 <= voices <= 12:
         raise ValueError("%s: voices must be 1..12" % song["name"])
+    hits = []
     if "midi" in song:
         path = os.path.join(songs_dir, song["midi"])
         if not os.path.exists(path):
             return None
-        notes = notes_from_midi(path, song.get("channels"))
+        notes, hits = notes_from_midi(path, song.get("channels"), song.get("drum_channels", [10]))
     else:
         notes = notes_from_tracks(song["tracks"], float(song.get("bpm", 120)))
 
     transpose = int(song.get("transpose", 0))
-    low, high = int(song.get("min_note", 52)), int(song.get("max_note", 100))
+    playable_low = int(song.get("playable_min", PLAYABLE_MIN))
+    playable_high = int(song.get("playable_max", PLAYABLE_MAX))
+    low = max(int(song.get("min_note", 52)), playable_low)
+    high = min(int(song.get("max_note", 100)), playable_high)
+    if high - low < 11:
+        raise ValueError("%s: the note range %d..%d is narrower than an octave" % (song["name"], low, high))
     tempo = float(song.get("tempo", 1.0))
     limit = float(song.get("max_seconds", 0)) * 1000.0
     gap = float(song.get("gap_ms", 15))
 
     shaped = []
+    moved = 0
     for start, end, note in notes:
         start, end = start / tempo, end / tempo
         if limit and start >= limit:
             continue
         note += transpose
+        original = note
         while note < low:
             note += 12
         while note > high:
             note -= 12
+        moved += note != original
         shaped.append((start, min(end, limit) if limit else end, note))
 
+    hits = [(ms / tempo, kind) for ms, kind in hits if not limit or ms / tempo < limit]
+    drums = int(song.get("drums", 2 if hits else 0)) if hits else 0
+    if not 0 <= drums < PIEZOS:
+        raise ValueError("%s: drums must be 0..11" % song["name"])
+    if drums == 0:
+        hits = []
+    pool = PIEZOS - drums
+
     if song.get("spread", True):
-        max_notes = int(song.get("max_notes", PIEZOS))
-        if not 1 <= max_notes <= PIEZOS:
-            raise ValueError("%s: max_notes must be 1..12" % song["name"])
-        timeline = spread_timeline(shaped, voices, max_notes, gap)
+        max_notes = int(song.get("max_notes", pool))
+        if not 1 <= max_notes <= pool:
+            raise ValueError("%s: max_notes must be 1..%d" % (song["name"], pool))
+        timeline = spread_timeline(shaped, voices, max_notes, gap, pool)
     else:
-        timeline = fixed_timeline(shaped, voices, gap)
+        timeline = fixed_timeline(shaped, voices, gap, pool)
+    timeline += drum_timeline(hits, pool)
     timeline.sort()
 
     events, now = [], 0
@@ -233,7 +301,28 @@ def song_events(song, songs_dir):
             delta -= MAX_DELTA
         events.append((max(0, delta), mask, note))
         now = ms
-    return voices, events
+
+    report = []
+    if moved:
+        report.append("%d notes moved into %d..%d" % (moved, low, high))
+    if drums:
+        report.append("%d drum hits on %d piezos" % (len(hits), drums))
+    return voices, events, report
+
+
+def drum_timeline(hits, pool):
+    """Each hit goes to one of the drum piezos (badges pool..11 - never the
+    master), preferring one that has finished its last hit."""
+    piezos = list(range(pool, PIEZOS))
+    busy_until = {b: -1.0 for b in piezos}
+    timeline = []
+    for ms, kind in sorted(hits):
+        free = [b for b in piezos if busy_until[b] <= ms]
+        b = free[0] if free else min(piezos, key=lambda x: busy_until[x])
+        busy_until[b] = ms + DRUM_SOUNDS[kind][3]
+        # Order 2: after any tone event in the same millisecond.
+        timeline.append((ms, 2, 1 << b, DRUM_BASE + kind))
+    return timeline
 
 
 def off_time(start, end, gap):
@@ -241,16 +330,16 @@ def off_time(start, end, gap):
     return end - gap if end - start > 2 * gap else start + (end - start) * 0.8
 
 
-def group_mask(voice, voices):
+def group_mask(voice, voices, pool):
     """The fixed badge group of one voice: 12 voices = one each, 4 = threes."""
-    return sum(1 << b for b in range(PIEZOS) if b * voices // PIEZOS == voice)
+    return sum(1 << b for b in range(pool) if b * voices // pool == voice)
 
 
 def mask_of(piezos):
     return sum(1 << b for b in piezos)
 
 
-def fixed_timeline(notes, voices, gap):
+def fixed_timeline(notes, voices, gap, pool):
     """spread: false - each voice always plays on its own group of badges, and
     a chord with more notes than voices loses its middle notes."""
     timeline = []   # (ms, order, piezo mask, note); offs sort before ons
@@ -259,19 +348,19 @@ def fixed_timeline(notes, voices, gap):
         # its zero-length on/off would sort after its replacement and win.
         if end - start < 1:
             continue
-        mask = group_mask(voice, voices)
+        mask = group_mask(voice, voices, pool)
         timeline.append((start, 1, mask, note))
         timeline.append((off_time(start, end, gap), 0, mask, 0))
     return timeline
 
 
-def spread_timeline(notes, voices, max_notes, gap):
+def spread_timeline(notes, voices, max_notes, gap, pool):
     """The default. The 12 piezos are one pool: a note normally gets
     12 // voices of them, but a chord with more notes than that shares the
     pool out as evenly as it can - a new note takes piezos from whichever note
     holds the most, never its last one - so up to max_notes notes sound at
     once. When notes end, their piezos go back to any note left short."""
-    target = max(1, PIEZOS // voices)
+    target = max(1, pool // voices)
     # Beyond max_notes at once, the outer lines still win over middle notes.
     kept = [(s, e, n) for s, e, _, n in allocate(notes, max_notes) if e - s >= 1]
 
@@ -283,7 +372,7 @@ def spread_timeline(notes, voices, max_notes, gap):
         batches.setdefault(round(off_time(start, end, gap)), ([], []))[0].append(i)
         batches.setdefault(round(start), ([], []))[1].append(i)
 
-    owner = [None] * PIEZOS
+    owner = [None] * pool
     held = {}       # note index -> the piezos it is sounding on
     timeline = []   # (ms, sequence, piezo mask, note): already in play order
 
@@ -291,7 +380,7 @@ def spread_timeline(notes, voices, max_notes, gap):
         timeline.append((ms, len(timeline), mask_of(piezos), note))
 
     def fair_share():
-        return max(1, min(target, PIEZOS // max(1, len(held))))
+        return max(1, min(target, pool // max(1, len(held))))
 
     def give(i, piezos, ms):
         for b in piezos:
@@ -311,7 +400,7 @@ def spread_timeline(notes, voices, max_notes, gap):
         for i in sorted(starts, key=lambda i: -kept[i][2]):
             held[i] = []
             share = fair_share()
-            take = [b for b in range(PIEZOS) if owner[b] is None][:share]
+            take = [b for b in range(pool) if owner[b] is None][:share]
             while len(take) < share:
                 donors = [j for j in held if j != i and len(held[j]) > len(take) + 1]
                 if not donors:
@@ -320,7 +409,7 @@ def spread_timeline(notes, voices, max_notes, gap):
                 take.append(held[j].pop())
             give(i, take, ms)
 
-        free = [b for b in range(PIEZOS) if owner[b] is None]
+        free = [b for b in range(pool) if owner[b] is None]
         while free:
             short = [j for j in held if len(held[j]) < fair_share()]
             if not short:
@@ -360,13 +449,14 @@ def build(manifest_path, out_path):
         if result is None:
             print("songs: %s skipped - songs/%s not found" % (song["name"], song["midi"]))
             continue
-        voices, events = result
+        voices, events, report = result
         ident = c_name(song["name"])
         size = 5 * len(events)
         note = " (large - consider max_seconds)" if size > WARN_BYTES else ""
         layout = "shared piezos" if song.get("spread", True) else "fixed groups"
-        print("songs: %s, %d voices, %s, %d events, %d bytes%s"
-              % (song["name"], voices, layout, len(events), size, note))
+        print("songs: %s, %d voices, %s, %d events, %d bytes%s%s"
+              % (song["name"], voices, layout, len(events), size,
+                 "".join("; " + r for r in report), note))
         trigger = ", ".join(str(int(t)) for t in song.get("trigger", []))
         lines.append("static const uint8_t kTrigger_%s[] = {%s};" % (ident, trigger or "0"))
         lines.append("static const SongEvent kEvents_%s[] = {" % ident)
@@ -377,6 +467,12 @@ def build(manifest_path, out_path):
         entries.append('    {"%s", kTrigger_%s, %d, %d, %d, kEvents_%s},'
                        % (song["name"], ident, len(song.get("trigger", [])), voices, len(events), ident))
 
+    lines.append("const SongDrum kSongDrums[] = {")
+    for name, center, spread, ms in DRUM_SOUNDS:
+        lines.append("    {%d, %d, %d}, // %s" % (center, spread, ms, name))
+    lines.append("};")
+    lines.append("const uint8_t kSongDrumCount = %d;" % len(DRUM_SOUNDS))
+    lines.append("")
     lines.append("const Song kSongs[] = {")
     lines.extend(entries or ['    {"none", nullptr, 0, 1, 0, nullptr},'])
     lines.append("};")

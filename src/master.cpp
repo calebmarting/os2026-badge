@@ -1208,6 +1208,7 @@ void masterStopSong()
     Serial.print(song->name);
     Serial.println(" stopped");
     song = nullptr;
+    noiseStop();
     silenceNeck();
     generalCall(CMD_PROMPT, PROMPT_OFF);
     updatePromptLeds(PROMPT_OFF);
@@ -1220,6 +1221,36 @@ bool masterSongPlaying()
     return song != nullptr;
 }
 
+static void playDrum(uint16_t piezos, uint8_t kind)
+{
+    if (kind >= kSongDrumCount)
+    {
+        return;
+    }
+    const SongDrum &d = kSongDrums[kind];
+    for (uint8_t id = 0; id < MAX_BADGES; id++)
+    {
+        if (!(piezos & (1u << id)))
+        {
+            continue;
+        }
+        if (id == 0)
+        {
+            noiseStart(d.centerHz, d.spreadHz, d.ms);
+            continue;
+        }
+        Wire.beginTransmission(wireAddress(id));
+        Wire.write(CMD_NOISE);
+        const uint16_t args[3] = {d.centerHz, d.spreadHz, d.ms};
+        for (uint16_t a : args)
+        {
+            Wire.write((uint8_t)(a & 0xFF));
+            Wire.write((uint8_t)(a >> 8));
+        }
+        Wire.endTransmission();
+    }
+}
+
 static void playPiezos(uint16_t piezos, uint16_t hz)
 {
     for (uint8_t id = 0; id < MAX_BADGES; id++)
@@ -1230,6 +1261,7 @@ static void playPiezos(uint16_t piezos, uint16_t hz)
         }
         if (id == 0)
         {
+            noiseStop();
             if (hz > 0)
             {
                 tone(BUZZER_PIN, hz);
@@ -1257,7 +1289,11 @@ static void serviceSong()
         const SongEvent &e = song->events[songIndex];
         uint16_t piezos = e.piezos;
         uint8_t note = e.note;
-        if (piezos)
+        if (piezos && note >= SONG_DRUM_BASE)
+        {
+            playDrum(piezos, note - SONG_DRUM_BASE);
+        }
+        else if (piezos)
         {
             playPiezos(piezos, songNoteHz(note));
             if (note)
@@ -1276,6 +1312,7 @@ static void serviceSong()
         }
         songNextMs += song->events[songIndex].deltaMs;
     }
+    noiseService();
     // The master's own LEDs show which piezos are sounding: its 6 pad LEDs,
     // with badges 7-12 folded onto the same six.
     uint8_t shown = (songSounding | (songSounding >> 6)) & 0x3F;

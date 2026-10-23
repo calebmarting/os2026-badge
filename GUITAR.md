@@ -355,12 +355,30 @@ committed). An entry takes either a `midi` file in `songs/` or inline `tracks`
   `false` keeps each voice on a fixed group of badges.
 - `max_notes` (with `spread`, default 12): the most notes at once.
 - `transpose`: in semitones.
-- `min_note` / `max_note`: notes outside this range are moved by octaves, to
-  keep them where the piezo can play them (default 52–100, E3–E7).
+- `min_note` / `max_note`: notes outside this range are moved by octaves
+  (default 52–100, E3–E7).
+- `playable_min` / `playable_max` (default 50–108, about 147 Hz–4.2 kHz): the
+  piezo's own limits. A note outside them wouldn't really sound, so it's moved
+  by octaves until it fits, even when `min_note`/`max_note` allow it. The
+  build reports how many notes were moved.
 - `tempo`, `max_seconds`, `gap_ms`: speed factor, length limit, and the gap
   that lets repeated notes sound again.
-- `channels`: MIDI channels to keep. By default, everything except drums
-  (channel 10).
+- `channels`: MIDI channels to keep for tones. By default, all of them.
+- `drum_channels` (default `[10]`, the General MIDI drum channel): these
+  channels play drums instead of tones.
+- `drums`: how many piezos play drums. The default is 2 if the song has any
+  drum notes, otherwise 0. They're the highest-numbered badges (10 and 11),
+  never the master, and they're taken out of the pool chords share. `0`
+  drops the drums.
+
+**Drums** are pseudo white noise. The badge toggles its piezo at random
+intervals around a center pitch for the hit's length, the same idea as
+`examples/drum`. Each General MIDI drum key maps to one of 9 sounds: kick,
+snare, closed and open hi-hat, crash, ride, low and high tom, and clap. The
+sounds are set in `DRUM_SOUNDS` in `tools/song_convert.py`, which generates
+them into the firmware. Edit a sound there and rebuild. A hit goes to whichever
+drum piezo is free, and runs on that badge without blocking. The master just
+sends `CMD_NOISE`.
 
 With `spread`, nothing is dropped below `max_notes`. Past that, or past
 `voices` without `spread`, the converter keeps the top and the bottom line and
