@@ -19,6 +19,8 @@ Manifest fields per song:
     spread       true (default): chords borrow piezos, see spread_timeline();
                  false: each voice keeps a fixed group of badges
     max_notes    with spread, most notes at once (default 12)
+    boost        with spread, true (default): piezos chords do not need make the
+                 most important notes louder; false: leave them idle
     midi         file in songs/ (skipped with a warning if it is missing)
     tracks, bpm  inline alternative to midi
     transpose    semitones, applied first
@@ -130,14 +132,14 @@ def parse_note(token):
 def notes_from_tracks(tracks, bpm):
     ms_per_beat = 60000.0 / bpm
     notes = []
-    for track in tracks:
+    for number, track in enumerate(tracks, 1):
         t = 0.0
         for token in track.split():
             name, beats = token.split(":")
             length = float(beats) * ms_per_beat
             note = parse_note(name)
             if note is not None:
-                notes.append((t, t + length, note))
+                notes.append((t, t + length, note, number))
             t += length
     return notes
 
@@ -248,26 +250,31 @@ def channel_usage(notes):
     return usage
 
 
+def ranked_channels(song, usage):
+    """Channels (or tracks) most important first: busiest by rank_by."""
+    rank_by = song.get("rank_by", "time")
+    if rank_by not in ("time", "notes"):
+        raise ValueError('%s: rank_by must be "time" or "notes"' % song["name"])
+    index = 1 if rank_by == "time" else 0
+    return sorted(usage, key=lambda c: (-usage[c][index], c))
+
+
 def chosen_channels(song, usage):
     """The tone channels a song keeps, or None for all of them."""
     if "channels" in song:
         return set(int(c) for c in song["channels"])
     if song.get("auto_channels"):
-        rank_by = song.get("rank_by", "time")
-        if rank_by not in ("time", "notes"):
-            raise ValueError('%s: rank_by must be "time" or "notes"' % song["name"])
-        key = (lambda c: usage[c][1]) if rank_by == "time" else (lambda c: usage[c][0])
-        ranked = sorted(usage, key=key, reverse=True)
-        return set(ranked[:int(song.get("voices", 6))])
+        return set(ranked_channels(song, usage)[:int(song.get("voices", 6))])
     return None
 
 
 def allocate(notes, voices):
-    """Assign notes to voices; returns [start, end, voice, note] lists."""
+    """Assign notes to voices; returns [start, end, voice, note, *extra]
+    lists, where extra is whatever followed the note in the input."""
     notes = sorted(notes, key=lambda n: (n[0], -n[2]))
     playing = [None] * voices       # index into out, per voice
     out = []
-    for start, end, note in notes:
+    for start, end, note, *extra in notes:
         for v in range(voices):
             if playing[v] is not None and out[playing[v]][1] <= start:
                 playing[v] = None
@@ -285,7 +292,7 @@ def allocate(notes, voices):
             v = by_pitch[len(by_pitch) // 2]
             out[playing[v]][1] = start
         playing[v] = len(out)
-        out.append([start, end, v, note])
+        out.append([start, end, v, note] + extra)
     return out
 
 
@@ -303,10 +310,11 @@ def song_events(song, songs_dir):
         keep = chosen_channels(song, channel_usage(notes))
         if keep is not None:
             notes = [n for n in notes if n[3] in keep]
-        notes = [n[:3] for n in notes]
     else:
         notes = notes_from_tracks(song["tracks"], float(song.get("bpm", 120)))
         keep = None
+    # 0 = the most important channel (or track), for boost.
+    importance = {c: k for k, c in enumerate(ranked_channels(song, channel_usage(notes)))}
 
     transpose = int(song.get("transpose", 0))
     playable_low = int(song.get("playable_min", PLAYABLE_MIN))
@@ -321,7 +329,7 @@ def song_events(song, songs_dir):
 
     shaped = []
     moved = 0
-    for start, end, note in notes:
+    for start, end, note, channel in notes:
         start, end = start / tempo, end / tempo
         if limit and start >= limit:
             continue
@@ -332,7 +340,7 @@ def song_events(song, songs_dir):
         while note > high:
             note -= 12
         moved += note != original
-        shaped.append((start, min(end, limit) if limit else end, note))
+        shaped.append((start, min(end, limit) if limit else end, note, importance[channel]))
 
     hits = [(ms / tempo, kind) for ms, kind in hits if not limit or ms / tempo < limit]
     drums = int(song.get("drums", 2 if hits else 0)) if hits else 0
@@ -346,7 +354,7 @@ def song_events(song, songs_dir):
         max_notes = int(song.get("max_notes", pool))
         if not 1 <= max_notes <= pool:
             raise ValueError("%s: max_notes must be 1..%d" % (song["name"], pool))
-        timeline = spread_timeline(shaped, voices, max_notes, gap, pool)
+        timeline = spread_timeline(shaped, voices, max_notes, gap, pool, song.get("boost", True))
     else:
         timeline = fixed_timeline(shaped, voices, gap, pool)
     timeline += drum_timeline(hits, pool)
@@ -405,7 +413,7 @@ def fixed_timeline(notes, voices, gap, pool):
     """spread: false - each voice always plays on its own group of badges, and
     a chord with more notes than voices loses its middle notes."""
     timeline = []   # (ms, order, piezo mask, note); offs sort before ons
-    for start, end, voice, note in allocate(notes, voices):
+    for start, end, voice, note, *_ in allocate(notes, voices):
         # A note stolen the moment it started never sounds at all; left in,
         # its zero-length on/off would sort after its replacement and win.
         if end - start < 1:
@@ -416,21 +424,29 @@ def fixed_timeline(notes, voices, gap, pool):
     return timeline
 
 
-def spread_timeline(notes, voices, max_notes, gap, pool):
-    """The default. The 12 piezos are one pool: a note normally gets
-    12 // voices of them, but a chord with more notes than that shares the
-    pool out as evenly as it can - a new note takes piezos from whichever note
-    holds the most, never its last one - so up to max_notes notes sound at
-    once. When notes end, their piezos go back to any note left short."""
+def spread_timeline(notes, voices, max_notes, gap, pool, boost):
+    """The default. The pool's piezos are shared by whatever is sounding,
+    worked out afresh at every instant something starts or stops:
+
+    1. Chords first: every sounding note gets an even share, up to
+       pool // voices piezos, so a chord with more notes than voices still
+       sounds in full (as many as max_notes at once).
+    2. With boost, piezos still idle make notes louder, shared out by
+       importance - weights 1, 1/2, 1/3, ... down the order of the busiest
+       channel, then the higher note - so the most important note gets the
+       most. A chord arriving takes them back, since step 1 comes first.
+
+    A note keeps the piezos it already has wherever it can; only the
+    difference moves."""
     target = max(1, pool // voices)
     # Beyond max_notes at once, the outer lines still win over middle notes.
-    kept = [(s, e, n) for s, e, _, n in allocate(notes, max_notes) if e - s >= 1]
+    kept = [(s, e, n, r) for s, e, _, n, r in allocate(notes, max_notes) if e - s >= 1]
 
-    # Everything happening in the same millisecond is one batch: ends first,
-    # then new notes (highest first), then any free piezos topped up - so a
-    # piezo is never handed to a note that is itself ending in that instant.
+    # Everything in the same millisecond is one batch: ends, then starts,
+    # then one rebalance - so a piezo is never handed to a note that is
+    # itself ending in that instant.
     batches = {}
-    for i, (start, end, note) in enumerate(kept):
+    for i, (start, end, note, rank) in enumerate(kept):
         batches.setdefault(round(off_time(start, end, gap)), ([], []))[0].append(i)
         batches.setdefault(round(start), ([], []))[1].append(i)
 
@@ -438,46 +454,56 @@ def spread_timeline(notes, voices, max_notes, gap, pool):
     held = {}       # note index -> the piezos it is sounding on
     timeline = []   # (ms, sequence, piezo mask, note): already in play order
 
-    def emit(ms, piezos, note):
-        timeline.append((ms, len(timeline), mask_of(piezos), note))
+    def importance_order():
+        return sorted(held, key=lambda i: (kept[i][3], -kept[i][2]))
 
-    def fair_share():
-        return max(1, min(target, pool // max(1, len(held))))
-
-    def give(i, piezos, ms):
-        for b in piezos:
-            owner[b] = i
-        held[i].extend(piezos)
-        emit(ms, piezos, kept[i][2])
+    def wanted():
+        order = importance_order()
+        base = max(1, min(target, pool // len(order)))
+        want = {i: base for i in order}
+        spare = pool - base * len(order)
+        if boost and spare > 0:
+            weights = [1.0 / (k + 1) for k in range(len(order))]
+            exact = [spare * w / sum(weights) for w in weights]
+            extra = [int(x) for x in exact]
+            # Largest remainders take what rounding left over.
+            by_remainder = sorted(range(len(order)), key=lambda k: (extra[k] - exact[k], k))
+            for k in by_remainder[:spare - sum(extra)]:
+                extra[k] += 1
+            for k, i in enumerate(order):
+                want[i] += extra[k]
+        return want
 
     for ms in sorted(batches):
         ends, starts = batches[ms]
+        released = []
         for i in ends:
-            freed = held.pop(i, [])
-            for b in freed:
+            for b in held.pop(i, []):
                 owner[b] = None
-            if freed:
-                emit(ms, freed, 0)
-
-        for i in sorted(starts, key=lambda i: -kept[i][2]):
+                released.append(b)
+        for i in starts:
             held[i] = []
-            share = fair_share()
-            take = [b for b in range(pool) if owner[b] is None][:share]
-            while len(take) < share:
-                donors = [j for j in held if j != i and len(held[j]) > len(take) + 1]
-                if not donors:
-                    break
-                j = max(donors, key=lambda j: len(held[j]))
-                take.append(held[j].pop())
-            give(i, take, ms)
 
-        free = [b for b in range(pool) if owner[b] is None]
-        while free:
-            short = [j for j in held if len(held[j]) < fair_share()]
-            if not short:
-                break
-            j = min(short, key=lambda j: len(held[j]))
-            give(j, [free.pop(0)], ms)
+        if held:
+            want = wanted()
+            for i in held:
+                while len(held[i]) > want[i]:
+                    b = held[i].pop()
+                    owner[b] = None
+                    released.append(b)
+            free = [b for b in range(pool) if owner[b] is None]
+            for i in importance_order():
+                need = max(0, want[i] - len(held[i]))
+                take, free = free[:need], free[need:]
+                for b in take:
+                    owner[b] = i
+                held[i].extend(take)
+                if take:
+                    timeline.append((ms, len(timeline), mask_of(take), kept[i][2]))
+
+        quiet = [b for b in released if owner[b] is None]
+        if quiet:
+            timeline.append((ms, len(timeline), mask_of(quiet), 0))
     return timeline
 
 

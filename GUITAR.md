@@ -354,6 +354,13 @@ committed). An entry takes either a `midi` file in `songs/` or inline `tracks`
   per note. When notes end, their piezos go back to any note left short.
   `false` keeps each voice on a fixed group of badges.
 - `max_notes` (with `spread`, default 12): the most notes at once.
+- `boost` (with `spread`, default `true`): piezos that chords don't need make
+  notes louder instead of sitting idle. Leftovers are shared by importance, in
+  proportions 1, 1/2, 1/3, ... down the list, so the most important note gets
+  the most. A single note gets every piezo; with two notes the split is about
+  2 : 1. A chord arriving takes piezos back first. Importance is the channel's
+  rank by `rank_by` (busiest first), then the higher note within a channel.
+  Typed `tracks` songs rank by track. `false` leaves spare piezos idle.
 - `transpose`: in semitones.
 - `min_note` / `max_note`: notes outside this range are moved by octaves
   (default 52–100, E3–E7).
