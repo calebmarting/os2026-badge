@@ -1,4 +1,5 @@
 #include "bus.h"
+#include "params.h"
 #include "scan_protocol.h"
 
 #include <Wire.h>
@@ -40,8 +41,8 @@ static void configureMaster()
     {
     }
     i2c.CTRLA.bit.LOWTOUTEN = 1;
-    i2c.CTRLA.bit.INACTOUT = 0;
-    i2c.CTRLA.bit.SDAHOLD = 2;
+    i2c.CTRLA.bit.INACTOUT = params.inactOut & 3;
+    i2c.CTRLA.bit.SDAHOLD = params.sdaHold & 3;
     i2c.CTRLA.bit.ENABLE = 1;
     while (i2c.SYNCBUSY.bit.ENABLE)
     {
@@ -131,26 +132,49 @@ uint16_t busTakeRecoveryCount()
     return n;
 }
 
+// The core's endTransmission() only queues the STOP. If requestFrom() goes
+// straight on, the hardware can turn that STOP into a repeated START - and a
+// fret badge's Wire only hands a write to onReceive() on a STOP (or a repeated
+// START into another write). The read would then be answered before the badge
+// has seen the command, with whatever it last had ready: its scan frame. So:
+// wait for the STOP to finish, then give the badge's ISR time to run. Scan
+// tokens never had this problem - a whole window sits between write and read.
+static void waitForCommandToLand()
+{
+    uint32_t startUs = micros();
+    while (SERCOM2->I2CM.STATUS.bit.BUSSTATE != 1 && micros() - startUs < 500)
+    {
+    }
+    delayMicroseconds(params.turnaroundUs);
+}
+
+BusReadResult busReadBlockOnce(uint8_t addr, uint8_t cmd, uint8_t *block, uint8_t len)
+{
+    busRecoverIfStuck();
+    Wire.beginTransmission(addr);
+    Wire.write(cmd);
+    if (Wire.endTransmission() != 0)
+    {
+        return BUS_READ_NACK;
+    }
+    waitForCommandToLand();
+    uint8_t got = Wire.requestFrom(addr, len);
+    for (uint8_t i = 0; i < len; i++)
+    {
+        block[i] = i < got ? Wire.read() : 0;
+    }
+    if (got != len)
+    {
+        return BUS_READ_SHORT;
+    }
+    return crc8(block, len - 1, crc8(&addr, 1)) == block[len - 1] ? BUS_READ_OK : BUS_READ_BAD_CRC;
+}
+
 bool busReadBlock(uint8_t addr, uint8_t cmd, uint8_t *block, uint8_t len, uint8_t attempts)
 {
     for (uint8_t attempt = 0; attempt < attempts; attempt++)
     {
-        busRecoverIfStuck();
-        Wire.beginTransmission(addr);
-        Wire.write(cmd);
-        if (Wire.endTransmission() != 0)
-        {
-            continue;
-        }
-        if (Wire.requestFrom(addr, len) != len)
-        {
-            continue;
-        }
-        for (uint8_t i = 0; i < len; i++)
-        {
-            block[i] = Wire.read();
-        }
-        if (crc8(block, len - 1, crc8(&addr, 1)) == block[len - 1])
+        if (busReadBlockOnce(addr, cmd, block, len) == BUS_READ_OK)
         {
             return true;
         }

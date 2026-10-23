@@ -92,6 +92,15 @@ every read after it. Long reads (the debug and OTA status blocks) retry up to
 SDA hold time, so a slow or ringing SCL edge on the long chain can't turn a
 data change into a false START or STOP.
 
+**Command, then read.** The debug and OTA status reads are a command write
+followed by a read. The master waits for the write's STOP to finish, plus
+`turnus` (200 µs), before it reads. Without that wait, the core can turn the
+STOP into a repeated START. The badge then answers before its I2C handler has
+taken in the command, so it sends its scan frame, which fails the check. Scan
+tokens never had this problem, because a whole scan window sits between their
+write and their read. On hardware, `bustest` read only 5–25% of these blocks
+successfully before this fix, on every badge alike.
+
 ## Wire protocol
 
 Fret badge N answers at **I2C address 0x30 + N** (0x31–0x3B). The offset keeps
@@ -214,6 +223,9 @@ until power-off. Copy values you settle on back into the header. Settings marked
 | `PTC_HOP_PER_BADGE` | `hopstep` **R** | 0 | delay += this x badge ID, to stagger badges |
 | `PTC_PAD_ISOLATE` | `isolate` **R** | 1 | only the measured pad is on the PTC, the other five held LOW. 0 = all six for the whole scan |
 | `SCAN_US` | `scanus` | 0 | fixed scan window in us, 0 = derived |
+| `BUS_TURNAROUND_US` | `turnus` | 200 | wait after a command write's STOP before reading the answer |
+| `BUS_SDA_HOLD` | `sdahold` | 2 | master SDA hold time, 0 off .. 3 longest |
+| `BUS_INACTOUT` | `inactout` | 0 | master bus inactivity timeout, 0 off |
 | `STRUM_READ_EVERY` | `strumevery` | 2 | extra strum-pad read after every N fret badges, 0 = once a cycle |
 | `MUTE_LOCKOUT_MS` | `mutelock` | 75 | after a mute is let go, a touch starting this soon is a bounce and cannot pluck |
 | `REALISTIC_STRUM` | `realistic` | 1 | 1 = a fret change stops a ringing note; 0 = ringing mode (master's left eye lit). Triple-tap the master to switch |
@@ -251,7 +263,7 @@ Open the master's USB serial at 115200 (`pio device monitor`).
 | `watch N` / `watch all` / `watch off` | raw/baseline/delta for badge N (0 = master), pulled over I2C; repeat `watch N` to add or remove badges |
 | `cal` | recalibrate the whole neck (hands off) |
 | `info` | which badges are present or calibrated, plus each one's firmware CRC |
-| `bustest` | I2C read reliability per badge, 50 x 8-byte and 20 x 33-byte reads, with every LED on and then every LED off |
+| `bustest` | I2C read reliability per badge, 50 x 8-byte and 20 x 33-byte reads, with every LED on and then every LED off; failures split into nack / short / bad CRC, plus the first failed block in hex |
 | `id` / `id N` | show this badge's ID / make it ID N and reboot (works on every badge's console) |
 | `params` | every tunable with its current value and range |
 | `set NAME VALUE` | change one on every badge |

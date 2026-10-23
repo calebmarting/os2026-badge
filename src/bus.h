@@ -21,3 +21,13 @@ uint16_t busTakeRecoveryCount();
 // seeded with the address (the debug and OTA status blocks). Up to `attempts`
 // tries, recovering the bus between them. True if a block checked out.
 bool busReadBlock(uint8_t addr, uint8_t cmd, uint8_t *block, uint8_t len, uint8_t attempts);
+
+// One attempt, saying how it went - for bustest.
+enum BusReadResult : uint8_t
+{
+    BUS_READ_OK,
+    BUS_READ_NACK,    // the command write was not acknowledged
+    BUS_READ_SHORT,   // the read ended before len bytes
+    BUS_READ_BAD_CRC, // len bytes arrived but failed the check
+};
+BusReadResult busReadBlockOnce(uint8_t addr, uint8_t cmd, uint8_t *block, uint8_t len);

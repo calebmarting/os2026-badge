@@ -56,6 +56,11 @@ struct Params
     uint8_t realistic;
     // Master only: how long a fret change must last before it stops a note.
     uint16_t fretGraceMs;
+    // Master only, I2C: wait between a command write and the read that
+    // answers it, after the STOP; SERCOM SDAHOLD (0-3) and INACTOUT (0-3).
+    uint16_t turnaroundUs;
+    uint8_t sdaHold;
+    uint8_t inactOut;
 };
 
 extern Params params;

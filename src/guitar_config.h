@@ -172,6 +172,14 @@ inline uint8_t wireAddress(uint8_t badgeId) { return I2C_ADDR_BASE + badgeId; }
 // to notice the token. Set a fixed value here only to override that.
 #define SCAN_US 0
 #define SCAN_MARGIN_US 250
+// Between a command write and the read that answers it, after the STOP is on
+// the wire: time for the fret badge's I2C interrupt to take the command in.
+#define BUS_TURNAROUND_US 200
+// The master's SERCOM SDA hold time (0 off, 1 ~75 ns, 2 ~450 ns, 3 ~600 ns)
+// and inactivity timeout (0 off, else 5/10/20 SCL cycles). Runtime-settable
+// for bus experiments: "set sdahold N", "set inactout N".
+#define BUS_SDA_HOLD 2
+#define BUS_INACTOUT 0
 // Missed tokens in a row before a fret badge counts as gone. Until then the
 // master keeps its last good frame; after, it reads as nothing held.
 #define STALE_SCANS 4

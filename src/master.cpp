@@ -807,12 +807,65 @@ static void printInfo()
     }
 }
 
+// One bustest pass of `reads` command-then-read transfers to every badge: the
+// successes per badge, why the rest failed, and the first failed block in hex.
+static void busTestPass(const char *label, uint8_t cmd, uint8_t len, uint8_t reads)
+{
+    char line[220];
+    int n = snprintf(line, sizeof(line), "%s ok:", label);
+    uint16_t why[4] = {0, 0, 0, 0};
+    uint8_t sample[DEBUG_LEN];
+    uint8_t sampleId = 0;
+    BusReadResult sampleWhy = BUS_READ_OK;
+
+    for (uint8_t id = 1; id < MAX_BADGES; id++)
+    {
+        uint8_t ok = 0;
+        for (uint8_t i = 0; i < reads; i++)
+        {
+            uint8_t blk[DEBUG_LEN];
+            BusReadResult r = busReadBlockOnce(wireAddress(id), cmd, blk, len);
+            why[r]++;
+            if (r == BUS_READ_OK)
+            {
+                ok++;
+            }
+            else if (sampleId == 0)
+            {
+                sampleId = id;
+                sampleWhy = r;
+                memcpy(sample, blk, len);
+            }
+        }
+        n += snprintf(line + n, sizeof(line) - n, " %u:%u", (unsigned)id, (unsigned)ok);
+    }
+    snprintf(line + n, sizeof(line) - n, " (of %u) | nack %u short %u badcrc %u | recoveries %u", (unsigned)reads,
+             (unsigned)why[BUS_READ_NACK], (unsigned)why[BUS_READ_SHORT], (unsigned)why[BUS_READ_BAD_CRC],
+             (unsigned)busTakeRecoveryCount());
+    Serial.println(line);
+
+    if (sampleId != 0)
+    {
+        static const char *const kWhy[] = {"ok", "nack", "short", "badcrc"};
+        n = snprintf(line, sizeof(line), "  first failure, fret %u (%s):", (unsigned)sampleId, kWhy[sampleWhy]);
+        for (uint8_t i = 0; i < len && n < (int)sizeof(line) - 4; i++)
+        {
+            n += snprintf(line + n, sizeof(line) - n, " %02X", sample[i]);
+        }
+        Serial.println(line);
+    }
+}
+
 // Read reliability per badge, with every LED on and then every LED off, so
 // failures can be told apart by distance down the chain and by LED load.
 static void busTest()
 {
-    const uint8_t statusReads = 50;
-    const uint8_t debugReads = 20;
+    Serial.print("bustest: turnus ");
+    Serial.print(params.turnaroundUs);
+    Serial.print(", sdahold ");
+    Serial.print(params.sdaHold);
+    Serial.print(", inactout ");
+    Serial.println(params.inactOut);
     for (uint8_t phase = 0; phase < 2; phase++)
     {
         bool lit = phase == 0;
@@ -820,36 +873,8 @@ static void busTest()
         updatePromptLeds(lit ? PROMPT_CALIBRATING : PROMPT_OFF);
         delay(50);
         busTakeRecoveryCount();
-
-        char line[200];
-        int n = snprintf(line, sizeof(line), "LEDs %s  8-byte reads:", lit ? "on " : "off");
-        for (uint8_t id = 1; id < MAX_BADGES; id++)
-        {
-            uint8_t ok = 0;
-            uint8_t blk[OTA_STATUS_LEN];
-            for (uint8_t i = 0; i < statusReads; i++)
-            {
-                ok += busReadBlock(wireAddress(id), CMD_OTA_STATUS, blk, OTA_STATUS_LEN, 1);
-            }
-            n += snprintf(line + n, sizeof(line) - n, " %u:%u", (unsigned)id, (unsigned)ok);
-        }
-        snprintf(line + n, sizeof(line) - n, "  (of %u)", (unsigned)statusReads);
-        Serial.println(line);
-
-        n = snprintf(line, sizeof(line), "LEDs %s 33-byte reads:", lit ? "on " : "off");
-        for (uint8_t id = 1; id < MAX_BADGES; id++)
-        {
-            uint8_t ok = 0;
-            uint8_t blk[DEBUG_LEN];
-            for (uint8_t i = 0; i < debugReads; i++)
-            {
-                ok += busReadBlock(wireAddress(id), CMD_DEBUG, blk, DEBUG_LEN, 1);
-            }
-            n += snprintf(line + n, sizeof(line) - n, " %u:%u", (unsigned)id, (unsigned)ok);
-        }
-        snprintf(line + n, sizeof(line) - n, "  (of %u), bus recoveries %u", (unsigned)debugReads,
-                 (unsigned)busTakeRecoveryCount());
-        Serial.println(line);
+        busTestPass(lit ? "LEDs on   8-byte" : "LEDs off  8-byte", CMD_OTA_STATUS, OTA_STATUS_LEN, 50);
+        busTestPass(lit ? "LEDs on  33-byte" : "LEDs off 33-byte", CMD_DEBUG, DEBUG_LEN, 20);
     }
     generalCall(CMD_PROMPT, PROMPT_OFF);
     updatePromptLeds(PROMPT_OFF);
@@ -926,6 +951,10 @@ static void setParam(char *arg)
     {
         paramsApplyAcquisition(0);
         calibrateAll();
+    }
+    if (index == paramFind("sdahold") || index == paramFind("inactout"))
+    {
+        busBegin(); // both live in CTRLA, applied at bus setup
     }
 }
 

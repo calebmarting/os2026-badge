@@ -24,6 +24,9 @@ Params params = {
     MUTE_LOCKOUT_MS,
     REALISTIC_STRUM,
     FRET_CHANGE_GRACE_MS,
+    BUS_TURNAROUND_US,
+    BUS_SDA_HOLD,
+    BUS_INACTOUT,
 };
 
 // Order is the wire index - append only, never reorder.
@@ -49,6 +52,9 @@ static const ParamInfo kParams[] = {
     {"mutelock", 0, 1000, false},
     {"realistic", 0, 1, false},
     {"fretgrace", 0, 1000, false},
+    {"turnus", 0, 5000, false},
+    {"sdahold", 0, 3, false},
+    {"inactout", 0, 3, false},
 };
 #define NUM_PARAMS (sizeof(kParams) / sizeof(kParams[0]))
 
@@ -99,6 +105,9 @@ int16_t paramGet(uint8_t index)
     case 18: return params.muteLockMs;
     case 19: return params.realistic;
     case 20: return params.fretGraceMs;
+    case 21: return params.turnaroundUs;
+    case 22: return params.sdaHold;
+    case 23: return params.inactOut;
     default: return 0;
     }
 }
@@ -132,6 +141,9 @@ bool paramSet(uint8_t index, int16_t value)
     case 18: params.muteLockMs = value; break;
     case 19: params.realistic = value; break;
     case 20: params.fretGraceMs = value; break;
+    case 21: params.turnaroundUs = value; break;
+    case 22: params.sdaHold = value; break;
+    case 23: params.inactOut = value; break;
     }
     return true;
 }
