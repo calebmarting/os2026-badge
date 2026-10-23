@@ -2,6 +2,7 @@
 #include "badge_hw.h"
 #include "guitar_config.h"
 #include "scan_protocol.h"
+#include "badge_config.h"
 #include "console.h"
 #include "ota.h"
 #include "params.h"
@@ -249,9 +250,20 @@ static void handleCommand(const char *line)
         debugPrint = !debugPrint;
         Serial.println(debugPrint ? "debug on" : "debug off");
     }
+    else if (strncmp(line, "id", 2) == 0 && (line[2] == '\0' || line[2] == ' '))
+    {
+        const char *arg = line + 2;
+        while (*arg == ' ')
+        {
+            arg++;
+        }
+        consoleIdCommand(arg, myId);
+    }
     else
     {
-        Serial.println("Fret badge commands: debug (toggle raw/baseline/delta), help");
+        Serial.println("Fret badge commands:");
+        Serial.println("  debug   toggle raw/baseline/delta on this serial port");
+        Serial.println("  id N    make this badge fret N (0 = master) and reboot");
         Serial.println("Everything else is on the master's console.");
     }
 }

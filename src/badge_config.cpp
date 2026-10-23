@@ -52,6 +52,53 @@ static void blinkSaved()
     }
 }
 
+// Shared by setup mode and the console: never returns.
+static void saveAndReboot(uint8_t id)
+{
+    saveBadgeId(id);
+    blinkSaved();
+    setSliderLeds(0);
+    // A reset is the honest way back: master and slave initialise Wire in
+    // different modes, so re-running init in place would not be enough.
+    NVIC_SystemReset();
+    while (true)
+    {
+        // NVIC_SystemReset() does not return; this just keeps the compiler
+        // from warning about falling off a non-returning path.
+    }
+}
+
+void consoleIdCommand(const char *arg, uint8_t currentId)
+{
+    char *end = nullptr;
+    long id = strtol(arg, &end, 10);
+    if (*arg == '\0' || *end != '\0' || id < 0 || id >= MAX_BADGES)
+    {
+        Serial.print("This badge is ID ");
+        Serial.print(currentId);
+        Serial.println(currentId == 0 ? " (master)" : "");
+        Serial.print("Set it with: id N   (0 = master, 1-");
+        Serial.print(MAX_BADGES - 1);
+        Serial.println(" = fret N)");
+        return;
+    }
+    if (id == currentId)
+    {
+        Serial.println("Already that ID");
+        return;
+    }
+
+    Serial.print("Saving ID ");
+    Serial.print(id);
+    Serial.println(", rebooting");
+    Serial.flush();
+    // Go quiet and drop off the bus before the reboot, as setup mode does.
+    noTone(BUZZER_PIN);
+    digitalWrite(BUZZER_PIN, LOW);
+    Wire.end();
+    saveAndReboot((uint8_t)id);
+}
+
 void runSetupMode(uint8_t id)
 {
     // Go quiet and drop off the bus: a badge being re-addressed must not keep
@@ -100,17 +147,12 @@ void runSetupMode(uint8_t id)
 
     if (saved)
     {
-        saveBadgeId(id);
-        blinkSaved();
+        saveAndReboot(id);
     }
 
     setSliderLeds(0);
-    // A reset is the honest way back: master and slave initialise Wire in
-    // different modes, so re-running init in place would not be enough.
     NVIC_SystemReset();
     while (true)
     {
-        // NVIC_SystemReset() does not return; this just keeps the compiler
-        // from warning about falling off a non-returning path.
     }
 }

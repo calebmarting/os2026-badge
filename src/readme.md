@@ -134,6 +134,12 @@ LEDs, on every badge:
 3. **Long-press** again to save. The LEDs blink three times and the badge reboots
    into its new role.
 
+**Or over USB serial** (115200): type `id 5` on a badge's console to make it
+fret 5 - it saves and reboots, exactly like finishing setup mode. `id` on its
+own shows the current ID. Handy after a USB upload, which erases the ID: the
+badge comes up as ID 0, so its console is the master's, and `id N` fixes it
+without touching the button.
+
 The ID lives in the last row of flash, outside the firmware, so it survives a
 power cycle and an I2C firmware update - but not a USB upload, which erases all
 of flash. Doing nothing for 30 s leaves setup without saving. A badge that has

@@ -14,3 +14,8 @@ uint8_t loadBadgeId();
 // Never returns - it reboots either way, because the master and slave roles
 // need Wire configured in different modes.
 void runSetupMode(uint8_t id);
+
+// The "id" console command, on any badge: no argument prints this badge's ID,
+// "id N" saves N and reboots into that role - the same as finishing setup
+// mode, without the button. Only returns if there was nothing to change.
+void consoleIdCommand(const char *arg, uint8_t currentId);

@@ -1,6 +1,7 @@
 #include "master.h"
 #include "badge_hw.h"
 #include "guitar_config.h"
+#include "badge_config.h"
 #include "console.h"
 #include "nvm.h"
 #include "ota.h"
@@ -821,6 +822,7 @@ static void printHelp()
     Serial.println("  watch N|all|off raw/baseline/delta of badge N (0 = master)");
     Serial.println("  cal             recalibrate the whole neck (hands off)");
     Serial.println("  info            which badges are present");
+    Serial.println("  id N            make THIS badge fret N and reboot (it is 0, the master)");
     Serial.println("  params          every tunable and its current value");
     Serial.println("  set NAME VALUE  change one on every badge, until power-off");
     Serial.println("  ota SIZE CRC    firmware update - use tools/ota_upload.py");
@@ -960,6 +962,10 @@ static void handleCommand(char *line)
     else if (strcmp(line, "info") == 0)
     {
         printInfo();
+    }
+    else if (strcmp(line, "id") == 0)
+    {
+        consoleIdCommand(arg, 0);
     }
     else if (strcmp(line, "params") == 0)
     {

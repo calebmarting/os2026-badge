@@ -239,12 +239,13 @@ Open the master's USB serial at 115200 (`pio device monitor`).
 | `watch N` / `watch all` / `watch off` | raw/baseline/delta for badge N (0 = master), pulled over I2C; repeat `watch N` to add or remove badges |
 | `cal` | recalibrate the whole neck (hands off) |
 | `info` | which badges are present or calibrated, plus each one's firmware CRC |
+| `id` / `id N` | show this badge's ID / make it ID N and reboot (works on every badge's console) |
 | `params` | every tunable with its current value and range |
 | `set NAME VALUE` | change one on every badge |
 | `ota SIZE CRC` | used by the update tool, not typed by hand |
 
 A fret badge's own USB console only knows `debug` (toggle raw/baseline/delta on
-that badge's serial) and `help`. A fret badge only measures when it gets the
+that badge's serial), `id` and `help`. A fret badge only measures when it gets the
 token, so its debug output needs the master running. `watch` on the master shows
 the same numbers without moving the cable.
 
@@ -287,7 +288,8 @@ negatives, try `set negmode 0`. Either way, the logs show which.
 first time (`pio run -t upload`, double-tapping reset into the bootloader if
 needed), because the old firmware doesn't know the update protocol. A USB upload
 erases the stored ID (`bossac --erase` wipes all flash above the bootloader), so
-**set each fret badge's ID once more** afterwards. An unconfigured badge comes
+**set each fret badge's ID once more** afterwards: with it still on USB, type
+`id N` in its serial console. An unconfigured badge comes
 up as the master, so the master itself needs nothing.
 
 **After that, over I2C.** With only the master on USB:
