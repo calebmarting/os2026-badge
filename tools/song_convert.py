@@ -74,17 +74,17 @@ DRUM_BASE = 128         # event note values from here up are drum hits
 # takes them where the piezo is quietest.
 DRUM_SOUNDS = [
     # name, center Hz, spread Hz, ms, pulse us, decay tenths, piezos
-    ("kick", 220, 80, 70, 0, 4, 1),
-    ("snare", 1500, 1300, 90, 0, 10, 1),
+    ("kick", 640, 80, 70, 0, 2, 1),
+    ("snare", 2000, 1300, 90, 0, 10, 1),
     # Hats and cymbals sit clear of the piezo's ~4 kHz resonance and play as
     # clicks: a full square burst across it rang shrill instead of hissing.
     ("closed hat", 7500, 2000, 25, 2, 0, 1),
     ("open hat", 7500, 2000, 140, 2, 20, 1),
     ("crash", 9000, 2500, 380, 2, 30, 1),
     ("ride", 7500, 1500, 140, 4, 10, 1),
-    ("low tom", 300, 50, 110, 0, 4, 1),
-    ("high tom", 420, 60, 100, 0, 4, 1),
-    ("clap", 1800, 1500, 45, 0, 0, 1),
+    ("low tom", 800, 50, 110, 0, 2, 1),
+    ("high tom", 1040, 60, 100, 0, 2, 1),
+    ("clap", 2200, 1500, 45, 0, 0, 1),
 ]
 DRUM_INDEX = {sound[0]: i for i, sound in enumerate(DRUM_SOUNDS)}
 

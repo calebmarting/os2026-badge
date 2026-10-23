@@ -3,10 +3,34 @@
         "name": "doom",
         "midi": "doom.mid",
         "trigger": [6, 6, 6],
-        "voices": 6,
+        "voices": 3,
         "transpose": 12,
-        "min_note": 52,
-        "max_note": 100
+        "min_note": 50,
+        "max_note": 120,
+        "auto_channels": true
+    },
+    {
+        "name": "badapple",
+        "midi": "badapple.mid",
+        "trigger": [6, 9],
+        "voices": 7,
+        "transpose": 12,
+        "min_note": 50,
+        "max_note": 120,
+        "auto_channels": true,
+        "max_seconds": 130
+    },
+        {
+        "name": "ttfaf",
+        "midi": "ttfaf.mid",
+        "trigger": [1,1,1],
+        "voices": 10,
+        "transpose": 12,
+        "min_note": 50,
+        "max_note": 120,
+        "auto_channels": true,
+        "max_seconds": 280,
+        "drums": 2
     },
     {
         "name": "ode",
