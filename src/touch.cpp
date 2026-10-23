@@ -153,7 +153,12 @@ uint32_t touchScan(bool globalIdle)
 
         settle(p, pos[i] || negTouch, now);
 
-        if (neg[i] && !negExplained)
+        // Only with nothing held anywhere. During play a hand near the pad can
+        // pull it negative with no neighbour on - typically while a weak
+        // shared-charge touch next door sits just under the on threshold.
+        // Re-zeroing it then would leave it reading "held" once the hand
+        // lifts, and with a pad held nothing drifts, so it would stay stuck.
+        if (neg[i] && !negExplained && globalIdle)
         {
             if (++p.negScans >= params.negRecalScans)
             {

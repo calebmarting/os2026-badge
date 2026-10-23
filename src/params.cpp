@@ -19,6 +19,7 @@ Params params = {
     PTC_HOP_PER_BADGE,
     SCAN_US,
     ATTRACT_IDLE_SECONDS,
+    PTC_PAD_ISOLATE,
 };
 
 // Order is the wire index - append only, never reorder.
@@ -39,6 +40,7 @@ static const ParamInfo kParams[] = {
     {"hopstep", 0, 15, true},
     {"scanus", 0, 30000, false},
     {"attract", 0, 3600, false},
+    {"isolate", 0, 1, true},
 };
 #define NUM_PARAMS (sizeof(kParams) / sizeof(kParams[0]))
 
@@ -84,6 +86,7 @@ int16_t paramGet(uint8_t index)
     case 13: return params.hopPerBadge;
     case 14: return params.scanUs;
     case 15: return params.attractSeconds;
+    case 16: return params.isolate;
     default: return 0;
     }
 }
@@ -112,6 +115,7 @@ bool paramSet(uint8_t index, int16_t value)
     case 13: params.hopPerBadge = value; break;
     case 14: params.scanUs = value; break;
     case 15: params.attractSeconds = value; break;
+    case 16: params.isolate = value; break;
     }
     return true;
 }
@@ -119,5 +123,5 @@ bool paramSet(uint8_t index, int16_t value)
 void paramsApplyAcquisition(uint8_t badgeId)
 {
     uint8_t hop = (params.freqHop + badgeId * params.hopPerBadge) & 0x0F;
-    padsConfigure(params.oversample, params.resistor, params.freqMode, hop);
+    padsConfigure(params.oversample, params.resistor, params.freqMode, hop, params.isolate != 0);
 }

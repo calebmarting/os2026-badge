@@ -152,9 +152,11 @@ cross the bus.
 4. **Negative readings** (`d < -neg`, 40), set by `negmode`:
    - `0`: never a touch.
    - `1` (default): a touch only while an **adjacent** pad reads on. That's a
-     finger bridging two pads, which drains the measured one negative. A negative
-     with no such neighbour has no finger behind it, so after `negrecal` (50)
-     scans in a row the pad is re-baselined.
+     finger bridging two pads, which drains the measured one negative. A
+     negative with no such neighbour, held for `negrecal` (50) scans **while
+     the whole neck reads idle**, means the baseline is wrong and the pad is
+     re-baselined. Never during play: re-zeroing a pad that a hand pulled
+     negative leaves it stuck on once the hand lifts.
    - `2`: always a touch, never re-baselines. This is the old behaviour.
 5. **Debounce:** a pad changes state only after `debounce` (2) scans in a row
    agree.
@@ -188,6 +190,7 @@ until power-off. Copy values you settle on back into the header. Settings marked
 | `PTC_FREQ_MODE` | `freq` **R** | 2 | 0 fixed frequency, anything else spread spectrum |
 | `PTC_FREQ_HOP` | `hop` **R** | 0 | spread-spectrum sample delay, 0..15 |
 | `PTC_HOP_PER_BADGE` | `hopstep` **R** | 0 | delay += this x badge ID, to stagger badges |
+| `PTC_PAD_ISOLATE` | `isolate` **R** | 0 | 1 = only the measured pad is on the PTC, the other five held LOW |
 | `SCAN_US` | `scanus` | 0 | fixed scan window in us, 0 = derived |
 | `ATTRACT_IDLE_SECONDS` | `attract` | 10 | idle seconds before the LEDs twinkle, 0 = never |
 | `ATTRACT_STEP_MS` | – | 150 | how often each badge reshuffles its LEDs |

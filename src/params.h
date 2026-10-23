@@ -43,6 +43,8 @@ struct Params
     uint16_t scanUs;
     // Master only: idle seconds before attract mode, 0 = never.
     uint16_t attractSeconds;
+    // 1 = while one pad is measured, the badge's other pads stay driven LOW.
+    uint8_t isolate;
 };
 
 extern Params params;

@@ -25,7 +25,10 @@
 #define TOUCH_NEG_THRESHOLD 40
 // 0 = a negative is never a touch.
 // 1 = a negative is a touch only while an adjacent pad reads positive; with no
-//     such neighbour, TOUCH_NEG_RECAL_SCANS in a row re-baselines the pad.
+//     such neighbour, TOUCH_NEG_RECAL_SCANS in a row *while the whole neck is
+//     idle* re-baselines the pad. Never during play: a hand on the neck can
+//     pull a pad negative, and re-zeroing it there leaves it stuck on when
+//     the hand lifts.
 // 2 = a negative is always a touch and never re-baselines (the old rule).
 #define TOUCH_NEG_MODE 1
 #define TOUCH_NEG_RECAL_SCANS 50
@@ -54,6 +57,11 @@
 #define PTC_FREQ_MODE 2
 #define PTC_FREQ_HOP 0
 #define PTC_HOP_PER_BADGE 0
+// 0 = all six pads are handed to the PTC for the whole scan.
+// 1 = only the pad being measured is; the other five stay driven LOW, so a
+//     finger resting on one grounds the hand instead of sharing charge with
+//     the pad being read. An experiment - try it if chords drop fingers.
+#define PTC_PAD_ISOLATE 0
 
 // Samples averaged per pad during calibration.
 #define TOUCH_CAL_SAMPLES 32

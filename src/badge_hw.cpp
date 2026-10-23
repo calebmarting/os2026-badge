@@ -34,23 +34,60 @@ static bool btnReleaseEvent = false;
 // begin() and never touches the pin again, so after padsIdle() has turned them
 // into plain outputs this is all a measurement needs - the PTC's own Y-line
 // configuration is untouched by pinMode(). PIO_ANALOG is peripheral B.
-static void padsMux()
+static void padMux(uint8_t pad)
 {
-    for (uint8_t i = 0; i < NUM_TOUCH_PADS; i++)
-    {
-        pinPeripheral(kPadPins[i], PIO_ANALOG);
-    }
+    pinPeripheral(kPadPins[pad], PIO_ANALOG);
 }
 
-// Drives every pad hard LOW. Between measurements the pads are then just more
+// Drives a pad hard LOW. Between measurements the pads are then just more
 // ground for the player's hand, instead of floating PTC inputs that another
 // badge's charge pulses can couple through.
+static void padIdle(uint8_t pad)
+{
+    digitalWrite(kPadPins[pad], LOW);
+    pinMode(kPadPins[pad], OUTPUT);
+}
+
 static void padsIdle()
 {
     for (uint8_t i = 0; i < NUM_TOUCH_PADS; i++)
     {
-        digitalWrite(kPadPins[i], LOW);
-        pinMode(kPadPins[i], OUTPUT);
+        padIdle(i);
+    }
+}
+
+// Isolated: only the pad being measured is connected to the PTC; its five
+// neighbours stay driven LOW, so a finger resting on one of them grounds the
+// hand instead of sharing charge with the measured pad. Not isolated: all six
+// are handed to the PTC for the whole scan, as FreeTouch normally leaves them.
+static bool isolatePads = false;
+
+// Brackets the measurements of one pad.
+static void padBegin(uint8_t pad)
+{
+    if (isolatePads)
+    {
+        padMux(pad);
+    }
+}
+
+static void padEnd(uint8_t pad)
+{
+    if (isolatePads)
+    {
+        padIdle(pad);
+    }
+}
+
+// Brackets a whole scan.
+static void scanBegin()
+{
+    if (!isolatePads)
+    {
+        for (uint8_t i = 0; i < NUM_TOUCH_PADS; i++)
+        {
+            padMux(i);
+        }
     }
 }
 
@@ -75,9 +112,10 @@ static int32_t avgMeasure(uint8_t pad, uint8_t samples)
 // is undocumented.
 void padsCalibrateCompCap()
 {
-    padsMux();
+    scanBegin();
     for (uint8_t i = 0; i < NUM_TOUCH_PADS; i++)
     {
+        padBegin(i);
         touchPads[i]->setCompCap(0);
         int32_t atLow = avgMeasure(i, 4);
         touchPads[i]->setCompCap(COMPCAP_MAX);
@@ -101,6 +139,7 @@ void padsCalibrateCompCap()
 
         touchCompCap[i] = lo;
         touchPads[i]->setCompCap(lo);
+        padEnd(i);
     }
     padsIdle();
 }
@@ -110,8 +149,9 @@ uint16_t padCompCap(uint8_t pad)
     return touchCompCap[pad];
 }
 
-void padsConfigure(uint8_t oversample, uint8_t resistor, uint8_t freqMode, uint8_t hop)
+void padsConfigure(uint8_t oversample, uint8_t resistor, uint8_t freqMode, uint8_t hop, bool isolate)
 {
+    isolatePads = isolate;
     for (uint8_t i = 0; i < NUM_TOUCH_PADS; i++)
     {
         touchPads[i]->setOversampling((oversample_t)oversample);
@@ -123,10 +163,12 @@ void padsConfigure(uint8_t oversample, uint8_t resistor, uint8_t freqMode, uint8
 uint32_t padsScan(uint16_t raw[NUM_TOUCH_PADS])
 {
     uint32_t startUs = micros();
-    padsMux();
+    scanBegin();
     for (uint8_t i = 0; i < NUM_TOUCH_PADS; i++)
     {
+        padBegin(i);
         raw[i] = touchPads[i]->measure();
+        padEnd(i);
     }
     padsIdle();
     return micros() - startUs;
