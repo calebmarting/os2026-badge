@@ -54,6 +54,38 @@ static void configureMaster()
     }
 }
 
+static uint8_t lastGot = 0;
+static uint16_t lastStatus = 0;
+
+// Switches the master's bit rate. Above ~92 kHz the 48 MHz clock is fine, but
+// BAUD is only 8 bits, so slower rates need the SERCOM on the 8 MHz GCLK3.
+// Same formula as the core's initMasterWIRE(), including its 125 ns rise time.
+static void setMasterRate(uint32_t hz)
+{
+    bool slow = hz < 100000;
+    uint32_t gclkHz = slow ? 8000000UL : SystemCoreClock;
+
+    SercomI2cm &i2c = SERCOM2->I2CM;
+    i2c.CTRLA.bit.ENABLE = 0;
+    while (i2c.SYNCBUSY.bit.ENABLE)
+    {
+    }
+    GCLK->CLKCTRL.reg = GCLK_CLKCTRL_ID(GCM_SERCOM2_CORE) | (slow ? GCLK_CLKCTRL_GEN_GCLK3 : GCLK_CLKCTRL_GEN_GCLK0) |
+                        GCLK_CLKCTRL_CLKEN;
+    while (GCLK->STATUS.bit.SYNCBUSY)
+    {
+    }
+    i2c.BAUD.bit.BAUD = gclkHz / (2 * hz) - 5 - ((gclkHz / 1000000) * 125) / 2000;
+    i2c.CTRLA.bit.ENABLE = 1;
+    while (i2c.SYNCBUSY.bit.ENABLE)
+    {
+    }
+    i2c.STATUS.bit.BUSSTATE = 1;
+    while (i2c.SYNCBUSY.bit.SYSOP)
+    {
+    }
+}
+
 void busBegin()
 {
     Wire.begin();
@@ -148,17 +180,20 @@ static void waitForCommandToLand()
     delayMicroseconds(params.turnaroundUs);
 }
 
-BusReadResult busReadBlockOnce(uint8_t addr, uint8_t cmd, uint8_t *block, uint8_t len)
+static BusReadResult readBlockAtCurrentRate(uint8_t addr, uint8_t cmd, uint8_t *block, uint8_t len)
 {
-    busRecoverIfStuck();
     Wire.beginTransmission(addr);
     Wire.write(cmd);
     if (Wire.endTransmission() != 0)
     {
+        lastGot = 0;
+        lastStatus = SERCOM2->I2CM.STATUS.reg;
         return BUS_READ_NACK;
     }
     waitForCommandToLand();
     uint8_t got = Wire.requestFrom(addr, len);
+    lastGot = got;
+    lastStatus = SERCOM2->I2CM.STATUS.reg;
     for (uint8_t i = 0; i < len; i++)
     {
         block[i] = i < got ? Wire.read() : 0;
@@ -168,6 +203,30 @@ BusReadResult busReadBlockOnce(uint8_t addr, uint8_t cmd, uint8_t *block, uint8_
         return BUS_READ_SHORT;
     }
     return crc8(block, len - 1, crc8(&addr, 1)) == block[len - 1] ? BUS_READ_OK : BUS_READ_BAD_CRC;
+}
+
+BusReadResult busReadBlockOnce(uint8_t addr, uint8_t cmd, uint8_t *block, uint8_t len)
+{
+    busRecoverIfStuck();
+    if (params.readKhz == 0)
+    {
+        return readBlockAtCurrentRate(addr, cmd, block, len);
+    }
+    setMasterRate((uint32_t)params.readKhz * 1000);
+    BusReadResult result = readBlockAtCurrentRate(addr, cmd, block, len);
+    // A failed read can leave the bus busy; recovery re-initialises at
+    // 100 kHz by itself, otherwise switch back here.
+    if (!busRecoverIfStuck())
+    {
+        setMasterRate(100000);
+    }
+    return result;
+}
+
+void busLastReadDetail(uint8_t &got, uint16_t &status)
+{
+    got = lastGot;
+    status = lastStatus;
 }
 
 bool busReadBlock(uint8_t addr, uint8_t cmd, uint8_t *block, uint8_t len, uint8_t attempts)

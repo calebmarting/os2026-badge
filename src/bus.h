@@ -31,3 +31,7 @@ enum BusReadResult : uint8_t
     BUS_READ_BAD_CRC, // len bytes arrived but failed the check
 };
 BusReadResult busReadBlockOnce(uint8_t addr, uint8_t cmd, uint8_t *block, uint8_t len);
+// After busReadBlockOnce(): how many bytes requestFrom() delivered, and the
+// SERCOM's STATUS register right after it (BUSERR bit 0, ARBLOST bit 1, RXNACK
+// bit 2, BUSSTATE bits 4-5, LOWTOUT bit 6).
+void busLastReadDetail(uint8_t &got, uint16_t &status);

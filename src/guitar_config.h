@@ -180,6 +180,10 @@ inline uint8_t wireAddress(uint8_t badgeId) { return I2C_ADDR_BASE + badgeId; }
 // for bus experiments: "set sdahold N", "set inactout N".
 #define BUS_SDA_HOLD 2
 #define BUS_INACTOUT 0
+// kHz for the long command-then-read blocks (debug, OTA status); 0 = the same
+// 100 kHz as everything else. These reads are not timing-critical, so they can
+// trade speed for margin on a long, lightly pulled-up chain. 16..100.
+#define BUS_READ_KHZ 0
 // Missed tokens in a row before a fret badge counts as gone. Until then the
 // master keeps its last good frame; after, it reads as nothing held.
 #define STALE_SCANS 4

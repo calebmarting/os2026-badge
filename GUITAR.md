@@ -94,12 +94,23 @@ data change into a false START or STOP.
 
 **Command, then read.** The debug and OTA status reads are a command write
 followed by a read. The master waits for the write's STOP to finish, plus
-`turnus` (200 µs), before it reads. Without that wait, the core can turn the
-STOP into a repeated START. The badge then answers before its I2C handler has
-taken in the command, so it sends its scan frame, which fails the check. Scan
-tokens never had this problem, because a whole scan window sits between their
-write and their read. On hardware, `bustest` read only 5–25% of these blocks
-successfully before this fix, on every badge alike.
+`turnus` (200 µs), before it reads. That rules out the core turning the STOP
+into a repeated START. On hardware it made no difference, though.
+
+**Long reads on the full neck.** With the pull-ups on the master only,
+`bustest` read only 20–50% of 8- and 33-byte blocks successfully, on every
+badge alike, with LEDs on or off. Nearly every failure was a read cut short,
+with the bus left stuck. The master had seen a START or STOP mid-read, which
+points at the badge's SDA changing while SCL is high: edge or ringing trouble
+on the long chain. The 2-byte scan frames never failed. Retries carry `info`,
+`watch` and the update through regardless. Things to try:
+
+- Put a second pull-up pair at the far end of the chain (fret 11).
+- `set readkhz 25` slows only these long reads to 25 kHz. Scans stay at
+  100 kHz.
+
+`bustest` reports where each short read stopped and the SERCOM status flags
+of the first failure.
 
 ## Wire protocol
 
@@ -226,6 +237,7 @@ until power-off. Copy values you settle on back into the header. Settings marked
 | `BUS_TURNAROUND_US` | `turnus` | 200 | wait after a command write's STOP before reading the answer |
 | `BUS_SDA_HOLD` | `sdahold` | 2 | master SDA hold time, 0 off .. 3 longest |
 | `BUS_INACTOUT` | `inactout` | 0 | master bus inactivity timeout, 0 off |
+| `BUS_READ_KHZ` | `readkhz` | 0 | bit rate for the long debug/status reads, 16..100 kHz; 0 = 100 kHz. Scans are always 100 kHz |
 | `STRUM_READ_EVERY` | `strumevery` | 2 | extra strum-pad read after every N fret badges, 0 = once a cycle |
 | `MUTE_LOCKOUT_MS` | `mutelock` | 75 | after a mute is let go, a touch starting this soon is a bounce and cannot pluck |
 | `REALISTIC_STRUM` | `realistic` | 1 | 1 = a fret change stops a ringing note; 0 = ringing mode (master's left eye lit). Triple-tap the master to switch |

@@ -61,6 +61,9 @@ struct Params
     uint16_t turnaroundUs;
     uint8_t sdaHold;
     uint8_t inactOut;
+    // Master only: kHz for command-then-read blocks (debug, OTA status),
+    // 0 = the normal 100 kHz. Scans always run at 100 kHz.
+    uint8_t readKhz;
 };
 
 extern Params params;

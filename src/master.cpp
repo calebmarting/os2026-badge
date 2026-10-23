@@ -817,6 +817,10 @@ static void busTestPass(const char *label, uint8_t cmd, uint8_t len, uint8_t rea
     uint8_t sample[DEBUG_LEN];
     uint8_t sampleId = 0;
     BusReadResult sampleWhy = BUS_READ_OK;
+    uint8_t sampleGot = 0;
+    uint16_t sampleStatus = 0;
+    // Where short reads stopped: after 0, 1, or more bytes.
+    uint16_t stoppedAt[3] = {0, 0, 0};
 
     for (uint8_t id = 1; id < MAX_BADGES; id++)
     {
@@ -826,6 +830,13 @@ static void busTestPass(const char *label, uint8_t cmd, uint8_t len, uint8_t rea
             uint8_t blk[DEBUG_LEN];
             BusReadResult r = busReadBlockOnce(wireAddress(id), cmd, blk, len);
             why[r]++;
+            uint8_t got;
+            uint16_t status;
+            busLastReadDetail(got, status);
+            if (r == BUS_READ_SHORT)
+            {
+                stoppedAt[got < 2 ? got : 2]++;
+            }
             if (r == BUS_READ_OK)
             {
                 ok++;
@@ -834,6 +845,8 @@ static void busTestPass(const char *label, uint8_t cmd, uint8_t len, uint8_t rea
             {
                 sampleId = id;
                 sampleWhy = r;
+                sampleGot = got;
+                sampleStatus = status;
                 memcpy(sample, blk, len);
             }
         }
@@ -843,11 +856,17 @@ static void busTestPass(const char *label, uint8_t cmd, uint8_t len, uint8_t rea
              (unsigned)why[BUS_READ_NACK], (unsigned)why[BUS_READ_SHORT], (unsigned)why[BUS_READ_BAD_CRC],
              (unsigned)busTakeRecoveryCount());
     Serial.println(line);
+    snprintf(line, sizeof(line), "  short reads stopped after 0 bytes: %u, 1 byte: %u, more: %u",
+             (unsigned)stoppedAt[0], (unsigned)stoppedAt[1], (unsigned)stoppedAt[2]);
+    Serial.println(line);
 
     if (sampleId != 0)
     {
         static const char *const kWhy[] = {"ok", "nack", "short", "badcrc"};
-        n = snprintf(line, sizeof(line), "  first failure, fret %u (%s):", (unsigned)sampleId, kWhy[sampleWhy]);
+        n = snprintf(line, sizeof(line), "  first failure, fret %u (%s, got %u, STATUS %03X%s%s%s%s):",
+                     (unsigned)sampleId, kWhy[sampleWhy], (unsigned)sampleGot, (unsigned)sampleStatus,
+                     (sampleStatus & 0x01) ? " BUSERR" : "", (sampleStatus & 0x02) ? " ARBLOST" : "",
+                     (sampleStatus & 0x04) ? " RXNACK" : "", (sampleStatus & 0x40) ? " LOWTOUT" : "");
         for (uint8_t i = 0; i < len && n < (int)sizeof(line) - 4; i++)
         {
             n += snprintf(line + n, sizeof(line) - n, " %02X", sample[i]);
@@ -865,7 +884,9 @@ static void busTest()
     Serial.print(", sdahold ");
     Serial.print(params.sdaHold);
     Serial.print(", inactout ");
-    Serial.println(params.inactOut);
+    Serial.print(params.inactOut);
+    Serial.print(", readkhz ");
+    Serial.println(params.readKhz);
     for (uint8_t phase = 0; phase < 2; phase++)
     {
         bool lit = phase == 0;
