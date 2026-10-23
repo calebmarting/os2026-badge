@@ -57,26 +57,32 @@ PLAYABLE_MIN = 50       # D3, ~147 Hz: below this the piezo barely sounds
 PLAYABLE_MAX = 108      # C8, ~4.2 kHz
 DRUM_BASE = 128         # event note values from here up are drum hits
 
-# Pseudo white noise per drum: the piezo is toggled at random intervals
-# between center-spread and center+spread Hz for ms milliseconds (the same
-# trick as examples/drum). Generated into the firmware, so this table is the
-# only place these live. The piezo resonates near 4 kHz and says little below
+# Pseudo white noise per drum, for ms milliseconds (badge_hw.h noiseStart()):
+#   pulse 0   the piezo is flipped at random intervals between center-spread
+#             and center+spread Hz - a square-ish burst, loud
+#   pulse N   instead it gets an N-us click at that random rate - much quieter,
+#             more like hiss; the click width is the volume knob
+#   decay     tenths: fades by (1 + decay/10) times by the end of the hit, so
+#             it does not stop dead - a burst slows (its pitch falls, like a
+#             kick or tom), clicks narrow at the same rate (so a cymbal never
+#             slides back down into the resonance)
+# Generated into the firmware, so this table is the only place these live. The piezo resonates near 4 kHz and says little below
 # ~150 Hz, so "low" drums sit higher than their real pitch.
 DRUM_SOUNDS = [
-    # name, center Hz, spread Hz, ms
-    ("kick", 160, 60, 70),
-    ("snare", 1500, 1300, 90),
-    # Hats and cymbals sit clear of the piezo's ~4 kHz resonance: a burst
-    # across it rings shrill instead of hissing.
-    ("closed hat", 7500, 2000, 25),
-    ("open hat", 7500, 2000, 140),
-    ("crash", 9000, 2500, 380),
-    ("ride", 7500, 1500, 140),
-    ("low tom", 230, 40, 110),
-    ("high tom", 340, 50, 100),
-    ("clap", 1800, 1500, 45),
+    # name, center Hz, spread Hz, ms, pulse us, decay tenths
+    ("kick", 160, 60, 70, 0, 10),
+    ("snare", 1500, 1300, 90, 0, 10),
+    # Hats and cymbals sit clear of the piezo's ~4 kHz resonance and play as
+    # clicks: a full square burst across it rang shrill instead of hissing.
+    ("closed hat", 7500, 2000, 25, 4, 0),
+    ("open hat", 7500, 2000, 140, 4, 20),
+    ("crash", 9000, 2500, 380, 4, 30),
+    ("ride", 7500, 1500, 140, 6, 10),
+    ("low tom", 230, 40, 110, 0, 10),
+    ("high tom", 340, 50, 100, 0, 10),
+    ("clap", 1800, 1500, 45, 0, 0),
 ]
-DRUM_INDEX = {name: i for i, (name, _, _, _) in enumerate(DRUM_SOUNDS)}
+DRUM_INDEX = {sound[0]: i for i, sound in enumerate(DRUM_SOUNDS)}
 
 # General MIDI program names, so the channel listing can say what each is.
 GM_PROGRAMS = (
@@ -556,8 +562,8 @@ def build(manifest_path, out_path):
                        % (song["name"], ident, len(song.get("trigger", [])), voices, len(events), ident))
 
     lines.append("const SongDrum kSongDrums[] = {")
-    for name, center, spread, ms in DRUM_SOUNDS:
-        lines.append("    {%d, %d, %d}, // %s" % (center, spread, ms, name))
+    for name, center, spread, ms, pulse, decay in DRUM_SOUNDS:
+        lines.append("    {%d, %d, %d, %d, %d}, // %s" % (center, spread, ms, pulse, decay, name))
     lines.append("};")
     lines.append("const uint8_t kSongDrumCount = %d;" % len(DRUM_SOUNDS))
     lines.append("")

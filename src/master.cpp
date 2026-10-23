@@ -1236,7 +1236,7 @@ static void playDrum(uint16_t piezos, uint8_t kind)
         }
         if (id == 0)
         {
-            noiseStart(d.centerHz, d.spreadHz, d.ms);
+            noiseStart(d.centerHz, d.spreadHz, d.ms, d.pulseUs, d.decayTenths);
             continue;
         }
         Wire.beginTransmission(wireAddress(id));
@@ -1247,6 +1247,8 @@ static void playDrum(uint16_t piezos, uint8_t kind)
             Wire.write((uint8_t)(a & 0xFF));
             Wire.write((uint8_t)(a >> 8));
         }
+        Wire.write(d.pulseUs);
+        Wire.write(d.decayTenths);
         Wire.endTransmission();
     }
 }
@@ -1312,7 +1314,6 @@ static void serviceSong()
         }
         songNextMs += song->events[songIndex].deltaMs;
     }
-    noiseService();
     // The master's own LEDs show which piezos are sounding: its 6 pad LEDs,
     // with badges 7-12 folded onto the same six.
     uint8_t shown = (songSounding | (songSounding >> 6)) & 0x3F;

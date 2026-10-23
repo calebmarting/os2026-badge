@@ -46,6 +46,7 @@ static bool debugPrint = TOUCH_DEBUG;
 static volatile uint16_t pendingFreq = 0;
 static volatile bool freqDirty = false;
 static volatile uint16_t noiseArgs[3];
+static volatile uint8_t noiseShape[2]; // pulse us, decay tenths
 static volatile bool noisePending = false;
 static uint16_t activeFreq = 0;
 
@@ -112,6 +113,8 @@ static void onReceive(int count)
                 uint8_t hi = Wire.read();
                 noiseArgs[i] = (uint16_t)lo | ((uint16_t)hi << 8);
             }
+            noiseShape[0] = count >= 9 ? Wire.read() : 0;
+            noiseShape[1] = count >= 9 ? Wire.read() : 0;
             noisePending = true;
         }
         else if (cmd == CMD_CAPO && count >= 2)
@@ -295,12 +298,13 @@ void slaveLoop()
         uint16_t center = noiseArgs[0];
         uint16_t spread = noiseArgs[1];
         uint16_t ms = noiseArgs[2];
+        uint8_t pulse = noiseShape[0];
+        uint8_t decay = noiseShape[1];
         noisePending = false;
         interrupts();
         activeFreq = 0;
-        noiseStart(center, spread, ms);
+        noiseStart(center, spread, ms, pulse, decay);
     }
-    noiseService();
 
     char line[48];
     if (consoleReadLine(line, sizeof(line)))

@@ -76,12 +76,15 @@ void updateAttractLeds();
 // displays never write them, so leaving attract mode has to.
 void endAttractLeds();
 
-// Pseudo white noise on the piezo: it is toggled at random intervals between
-// centerHz - spreadHz and centerHz + spreadHz for durationMs, a drum hit.
-// Non-blocking: noiseService() must run every loop to make the sound. Stops
-// any tone; noiseStop() ends it early.
-void noiseStart(uint16_t centerHz, uint16_t spreadHz, uint16_t durationMs);
-void noiseService();
+// Pseudo white noise on the piezo for durationMs, a drum hit, timed by TC4's
+// interrupt so it needs nothing from the main loop. pulseUs 0: the piezo is
+// flipped at random intervals between centerHz - spreadHz and centerHz +
+// spreadHz (a square-ish burst). pulseUs > 0: instead it gets a pulseUs-long
+// click at that random rate - much quieter, more like hiss. decayTenths fades
+// the hit by (1 + decayTenths / 10) times by its end: a square burst slows down
+// (its pitch falls, like a kick or tom), clicks get narrower at the same rate.
+// Stops any tone; noiseStop() ends it early.
+void noiseStart(uint16_t centerHz, uint16_t spreadHz, uint16_t durationMs, uint8_t pulseUs, uint8_t decayTenths);
 void noiseStop();
 
 // The whole slider lit: this badge is acting as a capo. Deliberately the same

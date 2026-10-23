@@ -337,60 +337,192 @@ void endAttractLeds()
     digitalWrite(LED_ACCEL, LOW);
 }
 
-static bool noiseOn = false;
-static bool noiseLevel = false;
-static uint32_t noiseEndMs = 0;
-static uint32_t noiseNextUs = 0;
-static uint32_t noiseMinHalfUs = 0;
-static uint32_t noiseSpanUs = 0;
-static uint32_t noiseRng = 0x9E3779B9;
+// Drum noise runs from TC4's interrupt, not the main loop: a cymbal flips
+// the piezo every 50-150 us, and a loop that also blinks LEDs and polls USB
+// only comes round every 25-40 us, which squashed the random timing onto a
+// few fixed steps - a harsh, partly tonal buzz instead of hiss. tone() uses
+// TC5; the two share one generic clock, which both set to the same 48 MHz.
+#define NOISE_TC TC4
+#define NOISE_TICKS_PER_US 3 // 48 MHz / 16
 
-void noiseStart(uint16_t centerHz, uint16_t spreadHz, uint16_t durationMs)
+static volatile bool noiseOn = false;
+static volatile bool noiseHigh = false;
+static volatile uint32_t noiseElapsed = 0;   // ticks
+static uint32_t noiseTotal = 0;              // ticks
+static uint32_t noiseMin = 0;                // ticks, shortest interval
+static uint32_t noiseSpan = 1;               // ticks, longest - shortest + 1
+static uint32_t noisePulse = 0;              // ticks high per click, 0 = square
+static uint32_t noiseDecayTenths = 0;
+static uint32_t noiseGap = 0;                // ticks low after the current click
+static uint32_t noiseRng = 0x9E3779B9;
+static volatile uint32_t *noiseOutSet;
+static volatile uint32_t *noiseOutClr;
+static uint32_t noiseMask;
+static bool noiseTimerReady = false;
+
+static void noiseSync()
 {
-    noTone(BUZZER_PIN);
-    uint32_t low = centerHz > spreadHz + 20 ? centerHz - spreadHz : 20;
-    uint32_t high = (uint32_t)centerHz + spreadHz;
-    // A higher frequency is a shorter half-period, so the bounds swap over.
-    noiseMinHalfUs = 500000UL / high;
-    noiseSpanUs = 500000UL / low - noiseMinHalfUs + 1;
-    noiseRng ^= micros();
-    noiseEndMs = millis() + durationMs;
-    noiseNextUs = micros();
-    noiseOn = true;
+    while (NOISE_TC->COUNT16.STATUS.bit.SYNCBUSY)
+    {
+    }
 }
 
-void noiseService()
+static void noiseTimerBegin()
 {
-    if (!noiseOn)
+    GCLK->CLKCTRL.reg = (uint16_t)(GCLK_CLKCTRL_CLKEN | GCLK_CLKCTRL_GEN_GCLK0 | GCLK_CLKCTRL_ID(GCM_TC4_TC5));
+    while (GCLK->STATUS.bit.SYNCBUSY)
     {
-        return;
     }
-    if ((int32_t)(millis() - noiseEndMs) >= 0)
+    NOISE_TC->COUNT16.CTRLA.reg = TC_CTRLA_SWRST;
+    while (NOISE_TC->COUNT16.CTRLA.bit.SWRST)
     {
-        noiseStop();
-        return;
     }
-    uint32_t now = micros();
-    if ((int32_t)(now - noiseNextUs) < 0)
-    {
-        return;
-    }
-    noiseLevel = !noiseLevel;
-    digitalWrite(BUZZER_PIN, noiseLevel ? HIGH : LOW);
-    // xorshift32: random() is too slow to call this often.
+    // Match-frequency mode: the counter restarts at CC0, so each interrupt
+    // sets how long until the next one.
+    NOISE_TC->COUNT16.CTRLA.reg = TC_CTRLA_MODE_COUNT16 | TC_CTRLA_WAVEGEN_MFRQ | TC_CTRLA_PRESCALER_DIV16;
+    noiseSync();
+    NOISE_TC->COUNT16.INTENSET.reg = TC_INTENSET_MC0;
+    NVIC_SetPriority(TC4_IRQn, 1);
+    NVIC_EnableIRQ(TC4_IRQn);
+
+    PortGroup &port = PORT->Group[g_APinDescription[BUZZER_PIN].ulPort];
+    noiseOutSet = &port.OUTSET.reg;
+    noiseOutClr = &port.OUTCLR.reg;
+    noiseMask = 1UL << g_APinDescription[BUZZER_PIN].ulPin;
+    noiseTimerReady = true;
+}
+
+static void noiseTimerStop()
+{
+    NOISE_TC->COUNT16.CTRLA.bit.ENABLE = 0;
+    noiseSync();
+    *noiseOutClr = noiseMask;
+    noiseHigh = false;
+    noiseOn = false;
+}
+
+// How far through the hit, 0..255. 32-bit only: 64-bit division is a slow
+// library call on the M0+, and this runs in the interrupt.
+static uint32_t noiseProgress()
+{
+    return noiseElapsed / (noiseTotal / 256 + 1);
+}
+
+// (1 + decayTenths / 10) at the end of the hit, 1 at the start, x256.
+static uint32_t noiseFade256()
+{
+    return 256 + noiseDecayTenths * noiseProgress() / 10;
+}
+
+static uint32_t noiseInterval()
+{
     noiseRng ^= noiseRng << 13;
     noiseRng ^= noiseRng >> 17;
     noiseRng ^= noiseRng << 5;
-    noiseNextUs = now + noiseMinHalfUs + noiseRng % noiseSpanUs;
+    return noiseMin + noiseRng % noiseSpan;
+}
+
+extern "C" void TC4_Handler()
+{
+    NOISE_TC->COUNT16.INTFLAG.reg = TC_INTFLAG_MC0;
+    if (!noiseOn || noiseElapsed >= noiseTotal)
+    {
+        noiseTimerStop();
+        return;
+    }
+
+    uint32_t next;
+    if (noisePulse == 0)
+    {
+        // Square: flip at every random half-period.
+        if (noiseHigh)
+        {
+            *noiseOutClr = noiseMask;
+        }
+        else
+        {
+            *noiseOutSet = noiseMask;
+        }
+        noiseHigh = !noiseHigh;
+        // Square drums fade by slowing down: the pitch falls away, which is
+        // what a kick or a tom does anyway.
+        next = noiseInterval() * noiseFade256() / 256;
+    }
+    else if (noiseHigh)
+    {
+        // Clicks: the end of one short pulse, then the rest of its period low.
+        *noiseOutClr = noiseMask;
+        noiseHigh = false;
+        next = noiseGap;
+    }
+    else
+    {
+        // Clicks fade by getting narrower, at an unchanged rate: slowing them
+        // down instead would drag a cymbal back through the piezo's ~4 kHz
+        // resonance on the way out.
+        uint32_t period = noiseInterval();
+        uint32_t pulse = noisePulse * 256 / noiseFade256();
+        if (pulse < 1)
+        {
+            pulse = 1;
+        }
+        noiseGap = period > pulse ? period - pulse : 1;
+        *noiseOutSet = noiseMask;
+        noiseHigh = true;
+        next = pulse;
+    }
+
+    if (next > 0xFFFF)
+    {
+        next = 0xFFFF;
+    }
+    noiseElapsed += next;
+    NOISE_TC->COUNT16.CC[0].reg = (uint16_t)(next - 1);
+    noiseSync();
+}
+
+void noiseStart(uint16_t centerHz, uint16_t spreadHz, uint16_t durationMs, uint8_t pulseUs, uint8_t decayTenths)
+{
+    noTone(BUZZER_PIN);
+    pinMode(BUZZER_PIN, OUTPUT);
+    if (!noiseTimerReady)
+    {
+        noiseTimerBegin();
+    }
+    NOISE_TC->COUNT16.CTRLA.bit.ENABLE = 0;
+    noiseSync();
+
+    uint32_t low = centerHz > spreadHz + 20 ? centerHz - spreadHz : 20;
+    uint32_t high = (uint32_t)centerHz + spreadHz;
+    // Square mode flips twice a cycle; click mode clicks once. A higher
+    // frequency is a shorter interval, so the bounds swap over.
+    uint32_t perSecond = 1000000UL * NOISE_TICKS_PER_US / (pulseUs ? 1 : 2);
+    noiseMin = perSecond / high;
+    noiseSpan = perSecond / low - noiseMin + 1;
+    noisePulse = (uint32_t)pulseUs * NOISE_TICKS_PER_US;
+    noiseDecayTenths = decayTenths;
+    noiseTotal = (uint32_t)durationMs * 1000 * NOISE_TICKS_PER_US;
+    noiseElapsed = 0;
+    noiseHigh = false;
+    noiseRng ^= micros();
+    *noiseOutClr = noiseMask;
+    noiseOn = true;
+
+    NOISE_TC->COUNT16.COUNT.reg = 0;
+    noiseSync();
+    NOISE_TC->COUNT16.CC[0].reg = 10; // first edge almost at once
+    noiseSync();
+    NOISE_TC->COUNT16.CTRLA.bit.ENABLE = 1;
+    noiseSync();
 }
 
 void noiseStop()
 {
     if (noiseOn)
     {
-        noiseOn = false;
-        noiseLevel = false;
-        digitalWrite(BUZZER_PIN, LOW);
+        noInterrupts();
+        noiseTimerStop();
+        interrupts();
     }
 }
 

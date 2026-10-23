@@ -22,14 +22,17 @@ struct __attribute__((packed)) SongEvent
 
 #define SONG_DRUM_BASE 128
 
-// A drum is a burst of pseudo white noise: the piezo toggles at random
-// intervals between centerHz - spreadHz and centerHz + spreadHz for ms.
+// A drum is a burst of pseudo white noise (badge_hw.h noiseStart()).
 // The table is generated with the songs (tools/song_convert.py DRUM_SOUNDS).
 struct SongDrum
 {
     uint16_t centerHz;
     uint16_t spreadHz;
     uint16_t ms;
+    // 0 = a square-ish burst; else clicks this many us long (see noiseStart).
+    uint8_t pulseUs;
+    // Fade by (1 + decayTenths / 10) times by the end (see noiseStart).
+    uint8_t decayTenths;
 };
 
 extern const SongDrum kSongDrums[];
