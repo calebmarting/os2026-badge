@@ -6,14 +6,14 @@
 
 #include <Arduino.h>
 
-// Packed to 5 bytes: songs are the biggest thing in flash.
-struct __attribute__((packed)) SongEvent
+// One step of a song, unpacked by songReadEvent().
+struct SongEvent
 {
     // Milliseconds after the previous event.
-    uint16_t deltaMs;
-    // Bit N = badge N's piezo. 0 = an event that only passes time. The
-    // converter decides who plays what - including chords that borrow
-    // piezos from other notes - so playback just does as it is told.
+    uint32_t deltaMs;
+    // Bit N = badge N's piezo. The converter decides who plays what -
+    // including chords that borrow piezos from other notes - so playback just
+    // does as it is told.
     uint16_t piezos;
     // MIDI note number for those piezos, 0 = they go silent, or from
     // SONG_DRUM_BASE up a drum hit: kSongDrums[note - SONG_DRUM_BASE].
@@ -46,14 +46,19 @@ struct Song
     uint8_t triggerLen;
     // As written in the manifest; informational only.
     uint8_t voices;
-    uint16_t eventCount;
-    const SongEvent *events;
+    // The events, packed 2-4 bytes each - songs are the biggest thing in
+    // flash. Format: encode_events() in tools/song_convert.py.
+    uint32_t dataLen;
+    const uint8_t *data;
 };
 
 extern const Song kSongs[];
 extern const uint8_t kSongCount;
 
 uint16_t songNoteHz(uint8_t note);
+
+// Unpacks the event at pos and moves pos past it. False at the end.
+bool songReadEvent(const uint8_t *&pos, const uint8_t *end, SongEvent &event);
 
 const Song *songFind(const char *name);
 

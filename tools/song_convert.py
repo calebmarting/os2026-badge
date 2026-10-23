@@ -74,7 +74,7 @@ DRUM_BASE = 128         # event note values from here up are drum hits
 # takes them where the piezo is quietest.
 DRUM_SOUNDS = [
     # name, center Hz, spread Hz, ms, pulse us, decay tenths, piezos
-    ("kick", 220, 80, 70, 0, 4, 2),
+    ("kick", 220, 80, 70, 0, 4, 1),
     ("snare", 1500, 1300, 90, 0, 10, 1),
     # Hats and cymbals sit clear of the piezo's ~4 kHz resonance and play as
     # clicks: a full square burst across it rang shrill instead of hissing.
@@ -123,7 +123,6 @@ for keys, name in (
 ):
     for key in keys:
         GM_DRUMS[key] = DRUM_INDEX[name]
-MAX_DELTA = 0xFFFF      # ms per event delta (uint16 in the firmware)
 WARN_BYTES = 30000
 
 
@@ -373,11 +372,7 @@ def song_events(song, songs_dir):
     events, now = [], 0
     for ms, _, mask, note in timeline:
         ms = round(ms)
-        delta = ms - now
-        while delta > MAX_DELTA:
-            events.append((MAX_DELTA, 0, 0))
-            delta -= MAX_DELTA
-        events.append((max(0, delta), mask, note))
+        events.append((max(0, ms - now), mask, note))
         now = ms
 
     report = []
@@ -519,6 +514,37 @@ def spread_timeline(notes, voices, max_notes, gap, pool, boost):
     return timeline
 
 
+def encode_events(events):
+    """The packed byte stream songs.cpp songReadEvent() reads. Per event:
+
+        delta    ms since the previous event, 7 bits per byte, low bits first,
+                 top bit set on every byte but the last (1 byte below 128 ms)
+        header   bit 7 = one piezo, bit 6 = a note byte follows,
+                 bits 3..0 = that piezo's number, or the top 4 bits of the
+                 12-bit piezo mask, whose low 8 bits come in the next byte
+        note     only when bit 6 is set: a MIDI note, or a drum (128 + kind);
+                 no note byte means those piezos go silent
+
+    So 2-4 bytes an event rather than a fixed 5."""
+    out = bytearray()
+    for delta, mask, note in events:
+        while True:
+            byte = delta & 0x7F
+            delta >>= 7
+            out.append(byte | (0x80 if delta else 0))
+            if not delta:
+                break
+        has_note = 0x40 if note else 0
+        if mask and not mask & (mask - 1):
+            out.append(0x80 | has_note | (mask.bit_length() - 1))
+        else:
+            out.append(has_note | (mask >> 8))
+            out.append(mask & 0xFF)
+        if note:
+            out.append(note)
+    return bytes(out)
+
+
 def c_name(name):
     return "".join(ch if ch.isalnum() else "_" for ch in name)
 
@@ -551,7 +577,8 @@ def build(manifest_path, out_path):
             continue
         voices, events, report = result
         ident = c_name(song["name"])
-        size = 5 * len(events)
+        data = encode_events(events)
+        size = len(data)
         note = " (large - consider max_seconds)" if size > WARN_BYTES else ""
         layout = "shared piezos" if song.get("spread", True) else "fixed groups"
         print("songs: %s, %d voices, %s, %d events, %d bytes%s%s"
@@ -559,13 +586,13 @@ def build(manifest_path, out_path):
                  "".join("; " + r for r in report), note))
         trigger = ", ".join(str(int(t)) for t in song.get("trigger", []))
         lines.append("static const uint8_t kTrigger_%s[] = {%s};" % (ident, trigger or "0"))
-        lines.append("static const SongEvent kEvents_%s[] = {" % ident)
-        for delta, mask, n in events:
-            lines.append("    {%d, 0x%03X, %d}," % (delta, mask, n))
+        lines.append("static const uint8_t kData_%s[] = {" % ident)
+        for i in range(0, len(data), 24):
+            lines.append("    " + ", ".join("0x%02X" % b for b in data[i:i + 24]) + ",")
         lines.append("};")
         lines.append("")
-        entries.append('    {"%s", kTrigger_%s, %d, %d, %d, kEvents_%s},'
-                       % (song["name"], ident, len(song.get("trigger", [])), voices, len(events), ident))
+        entries.append('    {"%s", kTrigger_%s, %d, %d, %d, kData_%s},'
+                       % (song["name"], ident, len(song.get("trigger", [])), voices, len(data), ident))
 
     lines.append("const SongDrum kSongDrums[] = {")
     for name, center, spread, ms, pulse, decay, _ in DRUM_SOUNDS:

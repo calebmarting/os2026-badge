@@ -19,6 +19,51 @@ uint16_t songNoteHz(uint8_t note)
     return shift ? (hz + (1 << (shift - 1))) >> shift : hz;
 }
 
+bool songReadEvent(const uint8_t *&pos, const uint8_t *end, SongEvent &event)
+{
+    if (pos >= end)
+    {
+        return false;
+    }
+    event.deltaMs = 0;
+    uint8_t shift = 0;
+    uint8_t b;
+    do
+    {
+        b = *pos++;
+        event.deltaMs |= (uint32_t)(b & 0x7F) << shift;
+        shift += 7;
+    } while ((b & 0x80) && pos < end && shift < 28);
+
+    if (pos >= end)
+    {
+        return false;
+    }
+    uint8_t header = *pos++;
+    if (header & 0x80)
+    {
+        event.piezos = 1u << (header & 0x0F);
+    }
+    else
+    {
+        if (pos >= end)
+        {
+            return false;
+        }
+        event.piezos = ((uint16_t)(header & 0x0F) << 8) | *pos++;
+    }
+    event.note = 0;
+    if (header & 0x40)
+    {
+        if (pos >= end)
+        {
+            return false;
+        }
+        event.note = *pos++;
+    }
+    return true;
+}
+
 const Song *songFind(const char *name)
 {
     for (uint8_t i = 0; i < kSongCount; i++)

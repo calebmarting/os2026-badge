@@ -1125,7 +1125,9 @@ static void handleCommand(char *line)
 // ---- Easter-egg songs ------------------------------------------------------
 
 static const Song *song = nullptr;
-static uint16_t songIndex = 0;
+static const uint8_t *songPos = nullptr;
+static const uint8_t *songEnd = nullptr;
+static SongEvent songPending; // the next event, due at songNextMs
 static uint32_t songNextMs = 0;
 static uint16_t songSounding = 0; // bit N = badge N's piezo has a note on
 
@@ -1193,9 +1195,15 @@ static void startSong(const Song *s)
     generalCall(CMD_PROMPT, PROMPT_HANDS_OFF);
 
     song = s;
-    songIndex = 0;
+    songPos = s->data;
+    songEnd = s->data + s->dataLen;
     songSounding = 0;
-    songNextMs = millis() + (s->eventCount ? s->events[0].deltaMs : 0);
+    if (!songReadEvent(songPos, songEnd, songPending))
+    {
+        masterStopSong();
+        return;
+    }
+    songNextMs = millis() + songPending.deltaMs;
 }
 
 void masterStopSong()
@@ -1288,9 +1296,8 @@ static void serviceSong()
     uint32_t now = millis();
     while (song && (int32_t)(now - songNextMs) >= 0)
     {
-        const SongEvent &e = song->events[songIndex];
-        uint16_t piezos = e.piezos;
-        uint8_t note = e.note;
+        uint16_t piezos = songPending.piezos;
+        uint8_t note = songPending.note;
         if (piezos && note >= SONG_DRUM_BASE)
         {
             playDrum(piezos, note - SONG_DRUM_BASE);
@@ -1307,12 +1314,12 @@ static void serviceSong()
                 songSounding &= ~piezos;
             }
         }
-        if (++songIndex >= song->eventCount)
+        if (!songReadEvent(songPos, songEnd, songPending))
         {
             masterStopSong();
             return;
         }
-        songNextMs += song->events[songIndex].deltaMs;
+        songNextMs += songPending.deltaMs;
     }
     // The master's own LEDs show which piezos are sounding: its 6 pad LEDs,
     // with badges 7-12 folded onto the same six.
