@@ -57,6 +57,9 @@ enum : uint8_t
 // The instrument rides along with every token, so a badge that browns out and
 // restarts is back on the right instrument one cycle later.
 #define SCAN_FLAG_UKULELE 0x02
+// The neck has been idle long enough: twinkle the LEDs instead of showing
+// pads. Each badge switches them inside its own window, like any LED update.
+#define SCAN_FLAG_ATTRACT 0x04
 
 // A badge's answer to a read, valid for the last CMD_SCAN it handled.
 //   byte 0: bits 0..5 = pads 1..6 measured as touched, plus status bits

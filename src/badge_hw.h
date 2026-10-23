@@ -68,6 +68,13 @@ void updateUkePlayLeds(uint8_t padMask, bool sounding);
 // every loop while blinking.
 void updatePromptLeds(uint8_t mode);
 
+// Attract mode: every LED on this badge on or off at random, reshuffled at
+// most every ATTRACT_STEP_MS. Call it once per scan while attract mode is on.
+void updateAttractLeds();
+// Turns off the two LEDs only attract mode uses (left eye, forehead). The play
+// displays never write them, so leaving attract mode has to.
+void endAttractLeds();
+
 // The whole slider lit: this badge is acting as a capo. Deliberately the same
 // in both instruments - in ukulele mode the middle LED is otherwise impossible
 // to light, so a full slider is unmistakably a capo rather than a chord.

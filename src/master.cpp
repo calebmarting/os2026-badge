@@ -63,6 +63,11 @@ static uint32_t cycleCount = 0;
 static uint32_t lastStatsMs = 0;
 static uint32_t lastRecoverMs = 0;
 
+// Attract mode: last time anything was touched or pressed, and whether the
+// neck is twinkling now.
+static uint32_t lastActivityMs = 0;
+static bool attract = false;
+
 // Console-controlled output, see printHelp().
 static bool logPadsOn = MASTER_LOG;
 static bool statsOn = MASTER_LOG;
@@ -197,33 +202,43 @@ static void printPads(uint8_t pads)
     }
 }
 
+static int appendPads(char *line, int n, int size, uint8_t pads)
+{
+    for (uint8_t i = 0; i < NUM_PADS && n + 1 < size; i++)
+    {
+        line[n++] = (pads & (1 << i)) ? '1' : '.';
+    }
+    line[n] = '\0';
+    return n;
+}
+
 // One line per change, so a touch log reads as a timeline: every badge's pads,
-// pad 1 leftmost. "------" is a stale badge, a trailing 'c' a capo.
+// pad 1 leftmost. "------" is a stale badge, a trailing 'c' a capo. Built in
+// RAM and sent as one write: every separate Serial.print is its own USB
+// transfer, and forty of them stalled the cycle by ~7 ms.
 static void logPads()
 {
     if (!logPadsOn)
     {
         return;
     }
-    Serial.print(millis());
-    Serial.print(" 0:");
-    printPads(touchMask());
+    char line[160];
+    int n = snprintf(line, sizeof(line), "%lu 0:", (unsigned long)millis());
+    n = appendPads(line, n, sizeof(line), touchMask());
     for (uint8_t id = 1; id < MAX_BADGES; id++)
     {
-        Serial.print(' ');
-        Serial.print(id);
-        Serial.print(':');
+        n += snprintf(line + n, sizeof(line) - n, " %u:", (unsigned)id);
         if (frets[id].fresh)
         {
-            printPads(frets[id].pads);
-            Serial.print(frets[id].capo ? 'c' : ' ');
+            n = appendPads(line, n, sizeof(line), frets[id].pads);
+            n += snprintf(line + n, sizeof(line) - n, "%c", frets[id].capo ? 'c' : ' ');
         }
         else
         {
-            Serial.print("------ ");
+            n += snprintf(line + n, sizeof(line) - n, "------ ");
         }
     }
-    Serial.println();
+    Serial.println(line);
 }
 
 static bool noteMiss(uint8_t id)
@@ -255,6 +270,10 @@ static bool noteFrame(uint8_t id, uint8_t b0)
     uint8_t pads = b0 & FRAME_PAD_BITS;
     bool capo = (b0 & FRAME_STATUS_CAPO) != 0;
     bool changed = !f.fresh || pads != f.pads || capo != f.capo;
+    if (capo != f.capo)
+    {
+        masterNoteActivity(); // someone pressed that badge's button
+    }
 
     f.misses = 0;
     f.pads = pads;
@@ -401,11 +420,27 @@ static void calibrateAll()
     // The acquisition settings may have changed, so re-time the scan from
     // scratch. Fret badges never measure unprompted, so this is safe now.
     ownScanMaxUs = touchScan(false);
+
+    // The idle countdown starts once the neck is ready to play.
+    masterNoteActivity();
 }
 
 void masterRecalibrate()
 {
     calibrateAll();
+}
+
+void masterNoteActivity()
+{
+    lastActivityMs = millis();
+    if (attract)
+    {
+        // The LEDs go back to showing pads in this same slot (renderLeds
+        // rewrites the forehead), and the fret badges on their next token.
+        attract = false;
+        endAttractLeds();
+        Serial.println("Attract mode off");
+    }
 }
 
 void masterBegin()
@@ -587,6 +622,12 @@ void masterToggleUkulele()
 // same. The only thing the master does differently is the forehead LED.
 static void renderLeds(bool sounding)
 {
+    if (attract)
+    {
+        updateAttractLeds();
+        return;
+    }
+
     uint8_t pads = touchMask();
 
     // The forehead LED means exactly one thing on exactly one badge: this is
@@ -603,28 +644,31 @@ static void renderLeds(bool sounding)
     }
 }
 
-static void printIdCounts(const char *label, bool (*pick)(const FretLink &), uint16_t FretLink::*count)
+static int appendIdCounts(char *line, int n, int size, const char *label, bool (*pick)(const FretLink &),
+                          uint16_t FretLink::*count)
 {
-    Serial.print(label);
+    n += snprintf(line + n, size - n, "%s", label);
     bool any = false;
     for (uint8_t id = 1; id < MAX_BADGES; id++)
     {
         if (pick(frets[id]))
         {
             any = true;
-            Serial.print(' ');
-            Serial.print(id);
             if (count)
             {
-                Serial.print('=');
-                Serial.print(frets[id].*count);
+                n += snprintf(line + n, size - n, " %u=%u", (unsigned)id, (unsigned)(frets[id].*count));
+            }
+            else
+            {
+                n += snprintf(line + n, size - n, " %u", (unsigned)id);
             }
         }
     }
     if (!any)
     {
-        Serial.print(" none");
+        n += snprintf(line + n, size - n, " none");
     }
+    return n;
 }
 
 static void logStats()
@@ -638,16 +682,17 @@ static void logStats()
 
     if (statsOn)
     {
-        char line[96];
-        snprintf(line, sizeof(line), "cycle avg %lu us max %lu us | scan %lu us window %lu us | ",
-                 (unsigned long)(cycleCount ? cycleSumUs / cycleCount : 0), (unsigned long)cycleMaxUs,
-                 (unsigned long)ownScanMaxUs, (unsigned long)scanWindowUs());
-        Serial.print(line);
+        char line[200];
+        int n = snprintf(line, sizeof(line), "cycle avg %lu us max %lu us | scan %lu us window %lu us | ",
+                         (unsigned long)(cycleCount ? cycleSumUs / cycleCount : 0), (unsigned long)cycleMaxUs,
+                         (unsigned long)ownScanMaxUs, (unsigned long)scanWindowUs());
         // A stale badge misses every token, so its count says nothing new.
-        printIdCounts("missed", [](const FretLink &f) { return f.fresh && f.missesLog > 0; }, &FretLink::missesLog);
-        printIdCounts(" | bad", [](const FretLink &f) { return f.badLog > 0; }, &FretLink::badLog);
-        printIdCounts(" | stale", [](const FretLink &f) { return !f.fresh; }, nullptr);
-        Serial.println();
+        n = appendIdCounts(line, n, sizeof(line), "missed",
+                           [](const FretLink &f) { return f.fresh && f.missesLog > 0; }, &FretLink::missesLog);
+        n = appendIdCounts(line, n, sizeof(line), " | bad", [](const FretLink &f) { return f.badLog > 0; },
+                           &FretLink::badLog);
+        appendIdCounts(line, n, sizeof(line), " | stale", [](const FretLink &f) { return !f.fresh; }, nullptr);
+        Serial.println(line);
     }
 
     for (uint8_t id = 1; id < MAX_BADGES; id++)
@@ -952,6 +997,10 @@ void masterLoop()
     {
         flags |= SCAN_FLAG_ANY_TOUCH;
     }
+    if (attract)
+    {
+        flags |= SCAN_FLAG_ATTRACT;
+    }
     uint8_t ownBefore = touchMask();
     bool changed = false;
     for (uint8_t id = 1; id < MAX_BADGES; id++)
@@ -983,6 +1032,23 @@ void masterLoop()
     for (uint8_t id = 1; id < MAX_BADGES; id++)
     {
         anyTouch |= frets[id].fresh && frets[id].pads != 0;
+    }
+
+    // Any touch ends attract mode at once, and restarts the idle countdown.
+    if (anyTouch)
+    {
+        masterNoteActivity();
+    }
+    bool wantAttract = params.attractSeconds > 0 &&
+                       millis() - lastActivityMs >= (uint32_t)params.attractSeconds * 1000;
+    if (wantAttract && !attract)
+    {
+        attract = true;
+        Serial.println("Attract mode");
+    }
+    else if (attract && params.attractSeconds == 0)
+    {
+        masterNoteActivity(); // "set attract 0" while twinkling
     }
 
     resolveFrets();

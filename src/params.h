@@ -41,6 +41,8 @@ struct Params
 
     // Master only: the silent window per token in us, 0 = derived.
     uint16_t scanUs;
+    // Master only: idle seconds before attract mode, 0 = never.
+    uint16_t attractSeconds;
 };
 
 extern Params params;

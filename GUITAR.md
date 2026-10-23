@@ -102,7 +102,10 @@ treat as reset and address-programming commands.
 **`CMD_SCAN` flags:** bit 0 `ANY_TOUCH` means something on the neck read as held
 last cycle; baselines only drift while it's clear. Bit 1 `UKULELE` is the current
 instrument; it rides along with every token, so a badge that reboots is back on
-the right instrument within a cycle.
+the right instrument within a cycle. Bit 2 `ATTRACT` means attract mode: the
+badge twinkles its LEDs at random instead of showing its pads, switching them
+inside its own window like any other LED update. It still measures, so a touch
+anywhere ends attract mode on the next cycle.
 
 **Frame**, which a badge returns on a normal read (2 bytes):
 
@@ -186,6 +189,9 @@ until power-off. Copy values you settle on back into the header. Settings marked
 | `PTC_FREQ_HOP` | `hop` **R** | 0 | spread-spectrum sample delay, 0..15 |
 | `PTC_HOP_PER_BADGE` | `hopstep` **R** | 0 | delay += this x badge ID, to stagger badges |
 | `SCAN_US` | `scanus` | 0 | fixed scan window in us, 0 = derived |
+| `ATTRACT_IDLE_SECONDS` | `attract` | 10 | idle seconds before the LEDs twinkle, 0 = never |
+| `ATTRACT_STEP_MS` | – | 150 | how often each badge reshuffles its LEDs |
+| `ATTRACT_ON_PERCENT` | – | 40 | chance each LED is lit per reshuffle |
 | `SCAN_MARGIN_US` | – | 250 | added to the derived window |
 | `STALE_SCANS` | – | 4 | misses in a row before a badge reads as gone |
 | `TOUCH_CAL_TARGET` | – | 120 | where COMPCAP parks the idle reading |

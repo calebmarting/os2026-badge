@@ -18,6 +18,7 @@ Params params = {
     PTC_FREQ_HOP,
     PTC_HOP_PER_BADGE,
     SCAN_US,
+    ATTRACT_IDLE_SECONDS,
 };
 
 // Order is the wire index - append only, never reorder.
@@ -37,6 +38,7 @@ static const ParamInfo kParams[] = {
     {"hop", 0, 15, true},
     {"hopstep", 0, 15, true},
     {"scanus", 0, 30000, false},
+    {"attract", 0, 3600, false},
 };
 #define NUM_PARAMS (sizeof(kParams) / sizeof(kParams[0]))
 
@@ -81,6 +83,7 @@ int16_t paramGet(uint8_t index)
     case 12: return params.freqHop;
     case 13: return params.hopPerBadge;
     case 14: return params.scanUs;
+    case 15: return params.attractSeconds;
     default: return 0;
     }
 }
@@ -108,6 +111,7 @@ bool paramSet(uint8_t index, int16_t value)
     case 12: params.freqHop = value; break;
     case 13: params.hopPerBadge = value; break;
     case 14: params.scanUs = value; break;
+    case 15: params.attractSeconds = value; break;
     }
     return true;
 }

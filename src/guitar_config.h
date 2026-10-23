@@ -75,6 +75,14 @@
 // single tap toggles the ukulele, so it now lands this much later.
 #define DOUBLE_TAP_MS 350
 
+// Attract mode: after ATTRACT_IDLE_SECONDS with nothing touched and no button
+// pressed, every badge twinkles its LEDs at random until something is touched.
+// 0 = never. Each badge reshuffles every ATTRACT_STEP_MS, with each LED lit
+// ATTRACT_ON_PERCENT of the time.
+#define ATTRACT_IDLE_SECONDS 10
+#define ATTRACT_STEP_MS 150
+#define ATTRACT_ON_PERCENT 40
+
 // 1 = a badge prints raw/baseline/delta per pad over its own USB serial after
 // every scan, rate-limited to TOUCH_DEBUG_MS. Only the boot state: "debug" on
 // a badge's console toggles it, and "watch" on the master shows the same

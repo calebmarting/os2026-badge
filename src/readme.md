@@ -116,6 +116,7 @@ LEDs, on every badge:
 | Everything, fast blink | calibrating soon - hands off the neck |
 | Everything, solid | calibrating, one badge at a time |
 | Slider filling up | receiving a firmware update |
+| Everything twinkling at random | attract mode: nothing touched for 10 s. Touch anything, or press a button, to play |
 
 ## Setting a badge's ID
 

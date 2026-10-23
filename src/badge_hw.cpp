@@ -263,6 +263,38 @@ void updatePromptLeds(uint8_t mode)
     digitalWrite(LED_BUTTON, LOW);
 }
 
+void updateAttractLeds()
+{
+    static uint32_t lastStepMs = 0;
+    uint32_t now = millis();
+    if (now - lastStepMs < ATTRACT_STEP_MS)
+    {
+        return;
+    }
+    lastStepMs = now;
+
+    uint8_t slider = 0;
+    for (uint8_t i = 0; i < NUM_SLIDER_LEDS; i++)
+    {
+        if (random(100) < ATTRACT_ON_PERCENT)
+        {
+            slider |= (1 << i);
+        }
+    }
+    setSliderLeds(slider);
+    const uint8_t others[] = {LED_BUILTIN, LED_BUTTON, LED_MIC, LED_ACCEL};
+    for (uint8_t pin : others)
+    {
+        digitalWrite(pin, random(100) < ATTRACT_ON_PERCENT ? HIGH : LOW);
+    }
+}
+
+void endAttractLeds()
+{
+    digitalWrite(LED_MIC, LOW);
+    digitalWrite(LED_ACCEL, LOW);
+}
+
 void updateUkePlayLeds(uint8_t padMask, bool sounding)
 {
     uint8_t strings = groupPads(&kUkulele, padMask);

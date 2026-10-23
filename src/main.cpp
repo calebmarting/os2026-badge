@@ -32,6 +32,9 @@ void setup()
 #endif
 
     badgeId = loadBadgeId();
+    // The mic input floats enough to differ per badge, so every badge
+    // twinkles differently in attract mode.
+    randomSeed(analogRead(ENTROPY_PIN) ^ (badgeId << 10) ^ micros());
     paramsApplyAcquisition(badgeId);
 
     Serial.print("Firmware ");
@@ -69,6 +72,10 @@ void loop()
     bool tapped = buttonTakeRelease();
     if (badgeId == 0)
     {
+        if (tapped)
+        {
+            masterNoteActivity();
+        }
         // One tap toggles the ukulele, two quick taps recalibrate the neck. The
         // toggle has to wait out the double-tap window to know which it was.
         static bool tapPending = false;

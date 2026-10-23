@@ -17,3 +17,7 @@ void masterToggleUkulele();
 // Blinks "hands off" on every badge, then calibrates each one in turn. Runs at
 // boot, and on demand from a double tap of the master's button.
 void masterRecalibrate();
+
+// Something was played or pressed: leaves attract mode and restarts its idle
+// countdown. Touches are noticed on their own; main calls this for the button.
+void masterNoteActivity();

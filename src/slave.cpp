@@ -183,6 +183,14 @@ static void runScan()
 
     ukuleleMode = (flags & SCAN_FLAG_UKULELE) != 0;
 
+    static bool wasAttract = false;
+    bool attract = (flags & SCAN_FLAG_ATTRACT) != 0;
+    if (wasAttract && !attract)
+    {
+        endAttractLeds();
+    }
+    wasAttract = attract;
+
     // Measured even with the capo on, so the master always sees the real hand.
     uint32_t scanUs = touchScan((flags & SCAN_FLAG_ANY_TOUCH) == 0);
     uint8_t pads = touchMask();
@@ -190,6 +198,10 @@ static void runScan()
     if (promptMode != PROMPT_OFF)
     {
         // The prompt owns the LEDs until the master clears it.
+    }
+    else if (flags & SCAN_FLAG_ATTRACT)
+    {
+        updateAttractLeds();
     }
     else if (capoOn)
     {
