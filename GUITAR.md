@@ -329,9 +329,8 @@ Tapping fret badges' **capo buttons** in a song's trigger sequence, within
 `SONG_TRIGGER_WINDOW_MS` (6 s) from first tap to last, plays that song. The
 master turns off the capos the taps switched on. **A tap of the master's
 button stops it.** While a song plays, the master stops handing out scan tokens
-and owns the bus. Each voice is played by a group of badges, split the same way
-strings are (12 voices = one badge each, 6 = pairs, 4 = threes), and every
-fret badge blinks.
+and owns the bus. The converter has already decided which badges play each
+note (see `spread` below), and every fret badge blinks.
 
 | Song | Trigger | |
 |---|---|---|
@@ -345,8 +344,16 @@ committed). An entry takes either a `midi` file in `songs/` or inline `tracks`
 (`NOTE:BEATS` tokens, one string per voice, `R` = rest). The other fields:
 
 - `trigger`: the capo-tap sequence, as fret IDs.
-- `voices`: 1–12. At 12, every badge plays its own voice. Fewer voices
-  share badges (6 = pairs, 4 = threes), so each one is louder.
+- `voices`: 1–12. Each note normally sounds on `12 / voices` piezos, i.e.
+  badges: one each at 12, pairs at 6, threes at 4. Fewer voices means each
+  note is louder.
+- `spread` (default `true`): the 12 piezos are one shared pool. A chord
+  with more notes than that shares the pool out as evenly as it can: a new
+  note takes piezos from whichever note holds the most, never its last one.
+  So at 4 voices, a 5- or 6-note chord still sounds in full, just quieter
+  per note. When notes end, their piezos go back to any note left short.
+  `false` keeps each voice on a fixed group of badges.
+- `max_notes` (with `spread`, default 12): the most notes at once.
 - `transpose`: in semitones.
 - `min_note` / `max_note`: notes outside this range are moved by octaves, to
   keep them where the piezo can play them (default 52–100, E3–E7).
@@ -355,15 +362,16 @@ committed). An entry takes either a `midi` file in `songs/` or inline `tracks`
 - `channels`: MIDI channels to keep. By default, everything except drums
   (channel 10).
 
-When a chord has more notes than voices, the converter keeps the top and the
-bottom line and drops middle notes. A missing MIDI file is skipped with a
+With `spread`, nothing is dropped below `max_notes`. Past that, or past
+`voices` without `spread`, the converter keeps the top and the bottom line and
+drops middle notes. A missing MIDI file is skipped with a
 warning, so the build never breaks.
 
 **Doom:** the E1M1 score and its MIDI transcriptions are copyrighted, so none
 ships here, and `songs/*.mid` is git-ignored. Download a MIDI of "At Doom's
 Gate", save it as `songs/doom.mid`, and run the update. The build prints the
-song's size, e.g. `songs: doom, 6 voices, 2400 events, 9600 bytes`, at 4 bytes
-an event. If it plays too low, too high or too long, adjust `transpose`,
+song's size, e.g. `songs: doom, 6 voices, shared piezos, 2400 events, 12000
+bytes`, at 5 bytes an event. If it plays too low, too high or too long, adjust `transpose`,
 `min_note`/`max_note` or `max_seconds`.
 
 ## Updating the firmware

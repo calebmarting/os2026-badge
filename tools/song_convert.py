@@ -7,14 +7,18 @@ Runs automatically before every build (scripts/build_songs.py), or by hand:
 
 Each song in the manifest comes either from a MIDI file in songs/ or from
 inline "tracks" (one string of NOTE:BEATS tokens per voice, R = rest). Notes
-are spread across up to `voices` voices - the master plays each voice on a
-group of badges - keeping the top line and the bass when a chord has more
-notes than voices. Standard library only, so PlatformIO's Python can run it.
+are given to the 12 piezos - one per badge - which the master plays as
+told; chords share the piezos out, and past max_notes at once the top line and
+the bass are kept. Standard library only, so PlatformIO's Python can run it.
 
 Manifest fields per song:
     name         console name ("song NAME")
     trigger      capo-button taps that start it, as fret IDs, e.g. [6, 6, 6]
-    voices       1..12 - one per badge at 12, pairs at 6, threes at 4
+    voices       1..12 - each note normally gets 12 / voices piezos (badges):
+                 one each at 12, pairs at 6, threes at 4
+    spread       true (default): chords borrow piezos, see spread_timeline();
+                 false: each voice keeps a fixed group of badges
+    max_notes    with spread, most notes at once (default 12)
     midi         file in songs/ (skipped with a warning if it is missing)
     tracks, bpm  inline alternative to midi
     transpose    semitones, applied first
@@ -27,11 +31,12 @@ Manifest fields per song:
 
 import json
 import os
+import re
 import struct
 import sys
 
 NOTE_BASE = {"C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11}
-WAIT_VOICE = 0xFF       # an event that only advances time
+PIEZOS = 12             # one per badge; an event with no piezos only waits
 MAX_DELTA = 0xFFFF      # ms per event delta (uint16 in the firmware)
 WARN_BYTES = 30000
 
@@ -210,35 +215,139 @@ def song_events(song, songs_dir):
             note -= 12
         shaped.append((start, min(end, limit) if limit else end, note))
 
-    timeline = []   # (ms, order, voice, note); offs sort before ons
-    for start, end, voice, note in allocate(shaped, voices):
+    if song.get("spread", True):
+        max_notes = int(song.get("max_notes", PIEZOS))
+        if not 1 <= max_notes <= PIEZOS:
+            raise ValueError("%s: max_notes must be 1..12" % song["name"])
+        timeline = spread_timeline(shaped, voices, max_notes, gap)
+    else:
+        timeline = fixed_timeline(shaped, voices, gap)
+    timeline.sort()
+
+    events, now = [], 0
+    for ms, _, mask, note in timeline:
+        ms = round(ms)
+        delta = ms - now
+        while delta > MAX_DELTA:
+            events.append((MAX_DELTA, 0, 0))
+            delta -= MAX_DELTA
+        events.append((max(0, delta), mask, note))
+        now = ms
+    return voices, events
+
+
+def off_time(start, end, gap):
+    """When a note's piezos go quiet: gap_ms early, so a repeat re-sounds."""
+    return end - gap if end - start > 2 * gap else start + (end - start) * 0.8
+
+
+def group_mask(voice, voices):
+    """The fixed badge group of one voice: 12 voices = one each, 4 = threes."""
+    return sum(1 << b for b in range(PIEZOS) if b * voices // PIEZOS == voice)
+
+
+def mask_of(piezos):
+    return sum(1 << b for b in piezos)
+
+
+def fixed_timeline(notes, voices, gap):
+    """spread: false - each voice always plays on its own group of badges, and
+    a chord with more notes than voices loses its middle notes."""
+    timeline = []   # (ms, order, piezo mask, note); offs sort before ons
+    for start, end, voice, note in allocate(notes, voices):
         # A note stolen the moment it started never sounds at all; left in,
         # its zero-length on/off would sort after its replacement and win.
         if end - start < 1:
             continue
-        off = end - gap if end - start > 2 * gap else start + (end - start) * 0.8
-        timeline.append((round(start), 1, voice, note))
-        timeline.append((round(off), 0, voice, 0))
-    timeline.sort()
+        mask = group_mask(voice, voices)
+        timeline.append((start, 1, mask, note))
+        timeline.append((off_time(start, end, gap), 0, mask, 0))
+    return timeline
 
-    events, now = [], 0
-    for ms, _, voice, note in timeline:
-        delta = ms - now
-        while delta > MAX_DELTA:
-            events.append((MAX_DELTA, WAIT_VOICE, 0))
-            delta -= MAX_DELTA
-        events.append((max(0, delta), voice, note))
-        now = ms
-    return voices, events
+
+def spread_timeline(notes, voices, max_notes, gap):
+    """The default. The 12 piezos are one pool: a note normally gets
+    12 // voices of them, but a chord with more notes than that shares the
+    pool out as evenly as it can - a new note takes piezos from whichever note
+    holds the most, never its last one - so up to max_notes notes sound at
+    once. When notes end, their piezos go back to any note left short."""
+    target = max(1, PIEZOS // voices)
+    # Beyond max_notes at once, the outer lines still win over middle notes.
+    kept = [(s, e, n) for s, e, _, n in allocate(notes, max_notes) if e - s >= 1]
+
+    # Everything happening in the same millisecond is one batch: ends first,
+    # then new notes (highest first), then any free piezos topped up - so a
+    # piezo is never handed to a note that is itself ending in that instant.
+    batches = {}
+    for i, (start, end, note) in enumerate(kept):
+        batches.setdefault(round(off_time(start, end, gap)), ([], []))[0].append(i)
+        batches.setdefault(round(start), ([], []))[1].append(i)
+
+    owner = [None] * PIEZOS
+    held = {}       # note index -> the piezos it is sounding on
+    timeline = []   # (ms, sequence, piezo mask, note): already in play order
+
+    def emit(ms, piezos, note):
+        timeline.append((ms, len(timeline), mask_of(piezos), note))
+
+    def fair_share():
+        return max(1, min(target, PIEZOS // max(1, len(held))))
+
+    def give(i, piezos, ms):
+        for b in piezos:
+            owner[b] = i
+        held[i].extend(piezos)
+        emit(ms, piezos, kept[i][2])
+
+    for ms in sorted(batches):
+        ends, starts = batches[ms]
+        for i in ends:
+            freed = held.pop(i, [])
+            for b in freed:
+                owner[b] = None
+            if freed:
+                emit(ms, freed, 0)
+
+        for i in sorted(starts, key=lambda i: -kept[i][2]):
+            held[i] = []
+            share = fair_share()
+            take = [b for b in range(PIEZOS) if owner[b] is None][:share]
+            while len(take) < share:
+                donors = [j for j in held if j != i and len(held[j]) > len(take) + 1]
+                if not donors:
+                    break
+                j = max(donors, key=lambda j: len(held[j]))
+                take.append(held[j].pop())
+            give(i, take, ms)
+
+        free = [b for b in range(PIEZOS) if owner[b] is None]
+        while free:
+            short = [j for j in held if len(held[j]) < fair_share()]
+            if not short:
+                break
+            j = min(short, key=lambda j: len(held[j]))
+            give(j, [free.pop(0)], ms)
+    return timeline
 
 
 def c_name(name):
     return "".join(ch if ch.isalnum() else "_" for ch in name)
 
 
+def load_manifest(path):
+    """songs.json, forgiving trailing commas - easy to leave behind while
+    editing by hand - and saying where any other mistake is."""
+    text = open(path, encoding="utf-8").read()
+    text = re.sub(r",(\s*[}\]])", r"\1", text)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as e:
+        sys.exit("songs: %s line %d column %d: %s" % (path, e.lineno, e.colno, e.msg))
+
+
 def build(manifest_path, out_path):
     songs_dir = os.path.dirname(manifest_path)
-    songs = json.load(open(manifest_path, encoding="utf-8"))
+    songs = load_manifest(manifest_path)
 
     lines = [
         "// GENERATED by tools/song_convert.py from songs/songs.json - do not edit.",
@@ -253,14 +362,16 @@ def build(manifest_path, out_path):
             continue
         voices, events = result
         ident = c_name(song["name"])
-        size = 4 * len(events)
+        size = 5 * len(events)
         note = " (large - consider max_seconds)" if size > WARN_BYTES else ""
-        print("songs: %s, %d voices, %d events, %d bytes%s" % (song["name"], voices, len(events), size, note))
+        layout = "shared piezos" if song.get("spread", True) else "fixed groups"
+        print("songs: %s, %d voices, %s, %d events, %d bytes%s"
+              % (song["name"], voices, layout, len(events), size, note))
         trigger = ", ".join(str(int(t)) for t in song.get("trigger", []))
         lines.append("static const uint8_t kTrigger_%s[] = {%s};" % (ident, trigger or "0"))
         lines.append("static const SongEvent kEvents_%s[] = {" % ident)
-        for delta, voice, n in events:
-            lines.append("    {%d, %d, %d}," % (delta, voice, n))
+        for delta, mask, n in events:
+            lines.append("    {%d, 0x%03X, %d}," % (delta, mask, n))
         lines.append("};")
         lines.append("")
         entries.append('    {"%s", kTrigger_%s, %d, %d, %d, kEvents_%s},'

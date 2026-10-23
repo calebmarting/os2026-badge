@@ -19,11 +19,6 @@ uint16_t songNoteHz(uint8_t note)
     return shift ? (hz + (1 << (shift - 1))) >> shift : hz;
 }
 
-uint8_t songVoiceForBadge(const Song *song, uint8_t badgeId)
-{
-    return (uint16_t)badgeId * song->voices / MAX_BADGES;
-}
-
 const Song *songFind(const char *name)
 {
     for (uint8_t i = 0; i < kSongCount; i++)

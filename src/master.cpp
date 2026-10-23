@@ -1127,7 +1127,7 @@ static void handleCommand(char *line)
 static const Song *song = nullptr;
 static uint16_t songIndex = 0;
 static uint32_t songNextMs = 0;
-static uint16_t songSounding = 0; // bit v = voice v has a note on
+static uint16_t songSounding = 0; // bit N = badge N's piezo has a note on
 
 // The latest capo-button taps, oldest first, for spotting a song's trigger.
 #define CAPO_TAP_HISTORY 8
@@ -1220,11 +1220,11 @@ bool masterSongPlaying()
     return song != nullptr;
 }
 
-static void playVoice(uint8_t voice, uint16_t hz)
+static void playPiezos(uint16_t piezos, uint16_t hz)
 {
     for (uint8_t id = 0; id < MAX_BADGES; id++)
     {
-        if (songVoiceForBadge(song, id) != voice)
+        if (!(piezos & (1u << id)))
         {
             continue;
         }
@@ -1255,16 +1255,18 @@ static void serviceSong()
     while (song && (int32_t)(now - songNextMs) >= 0)
     {
         const SongEvent &e = song->events[songIndex];
-        if (e.voice < song->voices)
+        uint16_t piezos = e.piezos;
+        uint8_t note = e.note;
+        if (piezos)
         {
-            playVoice(e.voice, songNoteHz(e.note));
-            if (e.note)
+            playPiezos(piezos, songNoteHz(note));
+            if (note)
             {
-                songSounding |= (1u << e.voice);
+                songSounding |= piezos;
             }
             else
             {
-                songSounding &= ~(1u << e.voice);
+                songSounding &= ~piezos;
             }
         }
         if (++songIndex >= song->eventCount)
@@ -1274,8 +1276,8 @@ static void serviceSong()
         }
         songNextMs += song->events[songIndex].deltaMs;
     }
-    // The master's own LEDs show which voices are sounding: its 6 pad LEDs,
-    // with voices 7-12 folded onto the same six.
+    // The master's own LEDs show which piezos are sounding: its 6 pad LEDs,
+    // with badges 7-12 folded onto the same six.
     uint8_t shown = (songSounding | (songSounding >> 6)) & 0x3F;
     updatePlayLeds(shown, songSounding != 0);
 }
