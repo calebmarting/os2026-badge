@@ -97,6 +97,10 @@
 #define ATTRACT_STEP_MS 150
 #define ATTRACT_ON_PERCENT 40
 
+// Easter-egg songs (songs/songs.json): a song's capo-tap trigger must be
+// completed within this window, first tap to last.
+#define SONG_TRIGGER_WINDOW_MS 3000
+
 // 1 = a badge prints raw/baseline/delta per pad over its own USB serial after
 // every scan, rate-limited to TOUCH_DEBUG_MS. Only the boot state: "debug" on
 // a badge's console toggles it, and "watch" on the master shows the same

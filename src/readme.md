@@ -270,6 +270,12 @@ excursion per pad.
 Already ruled out by measurement on a single badge: the **series resistor does
 almost nothing here** (R0 and R50K baselines differ by ~1 count).
 
+## Easter eggs
+
+Tap the capo buttons on frets **6, 6, 6** for Doom, or **1, 2, 3** for a demo.
+Tap the master's button to stop. Adding songs and the Doom MIDI is described in
+[GUITAR.md](../GUITAR.md#easter-egg-songs).
+
 ## Building and updating
 
 ```

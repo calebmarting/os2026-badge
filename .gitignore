@@ -45,3 +45,8 @@ c_cpp_properties.json
 # Python bytecode from the tools
 __pycache__/
 *.pyc
+
+# Generated from songs/songs.json at build time
+src/songs_data.cpp
+# MIDI files are usually someone else's copyright - keep them local
+songs/*.mid

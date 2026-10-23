@@ -25,3 +25,8 @@ void masterNoteActivity();
 // Realistic strumming (a fret change stops a ringing note) against ringing
 // mode (notes keep sounding and follow the frets). Left eye lit = ringing.
 void masterToggleRealistic();
+
+// Easter-egg songs (songs.h): one starts from its capo-tap trigger or the
+// console's "song NAME"; a tap of the master's button stops it.
+bool masterSongPlaying();
+void masterStopSong();

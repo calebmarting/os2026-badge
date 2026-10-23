@@ -10,6 +10,7 @@ The reference for the 12-badge guitar firmware in `src/`. For how to *play* it
 - [Tunable constants](#tunable-constants)
 - [Console commands](#console-commands)
 - [Collecting touch logs](#collecting-touch-logs)
+- [Easter-egg songs](#easter-egg-songs)
 - [Updating the firmware](#updating-the-firmware)
 - [Hardware assumptions](#hardware-assumptions)
 
@@ -278,6 +279,8 @@ Open the master's USB serial at 115200 (`pio device monitor`).
 | `info` | which badges are present or calibrated, plus each one's firmware CRC |
 | `bustest` | I2C read reliability per badge, 50 x 8-byte and 20 x 33-byte reads, with every LED on and then every LED off; failures split into nack / short / bad CRC, plus the first failed block in hex |
 | `id` / `id N` | show this badge's ID / make it ID N and reboot (works on every badge's console) |
+| `songs` | the easter-egg songs and their capo-tap triggers |
+| `song NAME` / `song stop` | play one now, or stop it |
 | `params` | every tunable with its current value and range |
 | `set NAME VALUE` | change one on every badge |
 | `ota SIZE CRC` | used by the update tool, not typed by hand |
@@ -319,6 +322,47 @@ For the negative-delta question (decision B), the cases worth capturing:
 
 If case 1 drops a fret, try `set negmode 2`. If phantom frets appear from
 negatives, try `set negmode 0`. Either way, the logs show which.
+
+## Easter-egg songs
+
+Tapping fret badges' **capo buttons** in a song's trigger sequence, within
+`SONG_TRIGGER_WINDOW_MS` (3 s) from first tap to last, plays that song. The
+master turns off the capos the taps switched on. **A tap of the master's
+button stops it.** While a song plays, the master stops handing out scan tokens
+and owns the bus. Each voice is played by a group of badges, split the same way
+strings are (6 voices = pairs, 4 = threes), and every fret badge blinks.
+
+| Song | Trigger | |
+|---|---|---|
+| `doom` | frets 6, 6, 6 | needs `songs/doom.mid` (see below) |
+| `ode` | frets 1, 2, 3 | Ode to Joy, a built-in 4-voice demo |
+
+**Adding a song** means editing `songs/songs.json`, nothing in the firmware.
+Before every build, `scripts/build_songs.py` runs `tools/song_convert.py`. That
+turns each entry into note tables in `src/songs_data.cpp` (generated, not
+committed). An entry takes either a `midi` file in `songs/` or inline `tracks`
+(`NOTE:BEATS` tokens, one string per voice, `R` = rest). The other fields:
+
+- `trigger`: the capo-tap sequence, as fret IDs.
+- `voices`: 1–6.
+- `transpose`: in semitones.
+- `min_note` / `max_note`: notes outside this range are moved by octaves, to
+  keep them where the piezo can play them (default 52–100, E3–E7).
+- `tempo`, `max_seconds`, `gap_ms`: speed factor, length limit, and the gap
+  that lets repeated notes sound again.
+- `channels`: MIDI channels to keep. By default, everything except drums
+  (channel 10).
+
+When a chord has more notes than voices, the converter keeps the top and the
+bottom line and drops middle notes. A missing MIDI file is skipped with a
+warning, so the build never breaks.
+
+**Doom:** the E1M1 score and its MIDI transcriptions are copyrighted, so none
+ships here, and `songs/*.mid` is git-ignored. Download a MIDI of "At Doom's
+Gate", save it as `songs/doom.mid`, and run the update. The build prints the
+song's size, e.g. `songs: doom, 6 voices, 2400 events, 9600 bytes`, at 4 bytes
+an event. If it plays too low, too high or too long, adjust `transpose`,
+`min_note`/`max_note` or `max_seconds`.
 
 ## Updating the firmware
 

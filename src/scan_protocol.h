@@ -32,6 +32,9 @@ enum : uint8_t
     CMD_PARAM = 0x55,
     // [] - the next read returns this badge's debug block instead of a frame.
     CMD_DEBUG = 0x56,
+    // [on] - set this badge's capo. The master turns off the capos that were
+    // tapped to trigger an easter-egg song.
+    CMD_CAPO = 0x57,
 
     // Firmware update, see ota.h.
     // [size u32, crc32 u32] general call - stop playing, erase staging.

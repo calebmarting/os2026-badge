@@ -52,7 +52,8 @@ static uint16_t activeFreq = 0;
 static bool ukuleleMode = false;
 
 // Set by a short press of this badge's button. Runtime only, like the mode.
-static bool capoOn = false;
+// Written by CMD_CAPO in the receive ISR too, hence volatile.
+static volatile bool capoOn = false;
 
 static void onRequest()
 {
@@ -100,6 +101,10 @@ static void onReceive(int count)
         else if (cmd == CMD_PROMPT && count >= 2)
         {
             promptMode = Wire.read();
+        }
+        else if (cmd == CMD_CAPO && count >= 2)
+        {
+            capoOn = Wire.read() != 0;
         }
         else if (cmd == CMD_DEBUG)
         {

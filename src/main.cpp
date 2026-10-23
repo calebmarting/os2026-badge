@@ -70,6 +70,12 @@ void loop()
     // A long press enters setup mode above and never comes back, so a release
     // reaching here is always a short press.
     bool tapped = buttonTakeRelease();
+    if (badgeId == 0 && tapped && masterSongPlaying())
+    {
+        // During a song the button only means "stop".
+        masterStopSong();
+        tapped = false;
+    }
     if (badgeId == 0)
     {
         if (tapped)

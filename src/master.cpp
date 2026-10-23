@@ -8,6 +8,7 @@
 #include "ota.h"
 #include "params.h"
 #include "scan_protocol.h"
+#include "songs.h"
 #include "touch.h"
 
 #include <Wire.h>
@@ -87,6 +88,9 @@ static bool statsOn = MASTER_LOG;
 static uint16_t watchMask = 0; // bit N = print badge N's debug block
 
 static void setStringFreq(uint8_t s, uint16_t freq);
+static void recordCapoTap(uint8_t id);
+static void listSongs();
+static void songCommand(const char *arg);
 
 // How long the bus stays silent after handing a badge the token.
 static uint32_t scanWindowUs()
@@ -224,6 +228,7 @@ static bool noteFrame(uint8_t id, uint8_t b0)
     if (capo != f.capo)
     {
         masterNoteActivity(); // someone pressed that badge's button
+        recordCapoTap(id);
     }
 
     f.misses = 0;
@@ -932,6 +937,8 @@ static void printHelp()
     Serial.println("  cal             recalibrate the whole neck (hands off)");
     Serial.println("  info            which badges are present");
     Serial.println("  bustest         I2C read reliability per badge, LEDs on and off");
+    Serial.println("  songs           the easter-egg songs and their capo-tap triggers");
+    Serial.println("  song NAME|stop  play one now, or stop it");
     Serial.println("  id N            make THIS badge fret N and reboot (it is 0, the master)");
     Serial.println("  params          every tunable and its current value");
     Serial.println("  set NAME VALUE  change one on every badge, until power-off");
@@ -1081,6 +1088,14 @@ static void handleCommand(char *line)
     {
         busTest();
     }
+    else if (strcmp(line, "songs") == 0)
+    {
+        listSongs();
+    }
+    else if (strcmp(line, "song") == 0)
+    {
+        songCommand(arg);
+    }
     else if (strcmp(line, "id") == 0)
     {
         consoleIdCommand(arg, 0);
@@ -1107,6 +1122,217 @@ static void handleCommand(char *line)
 // Everything that puts traffic on the bus or switches current - frequency
 // writes, LEDs, serial - happens in the master's slot, after its own pads are
 // back to driven-LOW, so none of it can land inside anyone's measurement.
+// ---- Easter-egg songs ------------------------------------------------------
+
+static const Song *song = nullptr;
+static uint16_t songIndex = 0;
+static uint32_t songNextMs = 0;
+static uint8_t songSounding = 0; // bit v = voice v has a note on
+
+// The latest capo-button taps, oldest first, for spotting a song's trigger.
+#define CAPO_TAP_HISTORY 8
+static uint8_t capoTapId[CAPO_TAP_HISTORY];
+static uint32_t capoTapMs[CAPO_TAP_HISTORY];
+static uint8_t capoTapCount = 0;
+
+// Every voice silent, on every badge - including the ones the song never
+// reached, in case a write was missed.
+static void silenceNeck()
+{
+    noTone(BUZZER_PIN);
+    digitalWrite(BUZZER_PIN, LOW);
+    for (uint8_t id = 1; id < MAX_BADGES; id++)
+    {
+        writeFreq(id, 0);
+    }
+}
+
+// Back to playing: nothing ringing, and whatever is touched right now is not
+// a fresh strum.
+static void resetStrings()
+{
+    uint32_t now = millis();
+    uint8_t strings = groupPads(inst, touchMask());
+    for (uint8_t s = 0; s < NUM_STRINGS; s++)
+    {
+        stringFreq[s] = 0;
+        stringStartMs[s] = 0;
+        padWasDown[s] = (strings & (1 << s)) != 0;
+        padPressMs[s] = now;
+        pressIsMuteBounce[s] = false;
+        pluckedFret[s] = 0;
+        fretMovedMs[s] = 0;
+    }
+}
+
+static void startSong(const Song *s)
+{
+    for (uint8_t i = 0; i < inst->stringCount; i++)
+    {
+        setStringFreq(i, 0);
+    }
+    // The taps that triggered it left those capos on; a song is no reason to
+    // keep them.
+    for (uint8_t i = 0; i < s->triggerLen; i++)
+    {
+        uint8_t id = s->trigger[i];
+        if (id > 0 && id < MAX_BADGES)
+        {
+            Wire.beginTransmission(wireAddress(id));
+            Wire.write(CMD_CAPO);
+            Wire.write((uint8_t)0);
+            Wire.endTransmission();
+        }
+    }
+    capoTapCount = 0;
+
+    Serial.print("Easter egg: ");
+    Serial.print(s->name);
+    Serial.println(" - tap the master's button to stop");
+    // Every badge flashes along while the master owns the bus.
+    generalCall(CMD_PROMPT, PROMPT_HANDS_OFF);
+
+    song = s;
+    songIndex = 0;
+    songSounding = 0;
+    songNextMs = millis() + (s->eventCount ? s->events[0].deltaMs : 0);
+}
+
+void masterStopSong()
+{
+    if (!song)
+    {
+        return;
+    }
+    Serial.print("Song ");
+    Serial.print(song->name);
+    Serial.println(" stopped");
+    song = nullptr;
+    silenceNeck();
+    generalCall(CMD_PROMPT, PROMPT_OFF);
+    updatePromptLeds(PROMPT_OFF);
+    resetStrings();
+    masterNoteActivity();
+}
+
+bool masterSongPlaying()
+{
+    return song != nullptr;
+}
+
+static void playVoice(uint8_t voice, uint16_t hz)
+{
+    for (uint8_t id = 0; id < MAX_BADGES; id++)
+    {
+        if (songVoiceForBadge(song, id) != voice)
+        {
+            continue;
+        }
+        if (id == 0)
+        {
+            if (hz > 0)
+            {
+                tone(BUZZER_PIN, hz);
+            }
+            else
+            {
+                noTone(BUZZER_PIN);
+                digitalWrite(BUZZER_PIN, LOW);
+            }
+        }
+        else
+        {
+            writeFreq(id, hz);
+        }
+    }
+}
+
+// Runs instead of the scan cycle while a song plays: nobody measures, so the
+// master can hit each note within a millisecond rather than once a cycle.
+static void serviceSong()
+{
+    uint32_t now = millis();
+    while (song && (int32_t)(now - songNextMs) >= 0)
+    {
+        const SongEvent &e = song->events[songIndex];
+        if (e.voice < song->voices)
+        {
+            playVoice(e.voice, songNoteHz(e.note));
+            if (e.note)
+            {
+                songSounding |= (1 << e.voice);
+            }
+            else
+            {
+                songSounding &= ~(1 << e.voice);
+            }
+        }
+        if (++songIndex >= song->eventCount)
+        {
+            masterStopSong();
+            return;
+        }
+        songNextMs += song->events[songIndex].deltaMs;
+    }
+    // The master's own LEDs show which voices are sounding.
+    updatePlayLeds(songSounding, songSounding != 0);
+}
+
+static void recordCapoTap(uint8_t id)
+{
+    if (capoTapCount == CAPO_TAP_HISTORY)
+    {
+        memmove(capoTapId, capoTapId + 1, CAPO_TAP_HISTORY - 1);
+        memmove(capoTapMs, capoTapMs + 1, (CAPO_TAP_HISTORY - 1) * sizeof(capoTapMs[0]));
+        capoTapCount--;
+    }
+    capoTapId[capoTapCount] = id;
+    capoTapMs[capoTapCount] = millis();
+    capoTapCount++;
+
+    const Song *s = songMatchTrigger(capoTapId, capoTapMs, capoTapCount, millis());
+    if (s && !song)
+    {
+        startSong(s);
+    }
+}
+
+static void listSongs()
+{
+    for (uint8_t i = 0; i < kSongCount; i++)
+    {
+        const Song &s = kSongs[i];
+        char line[80];
+        int n = snprintf(line, sizeof(line), "  %-10s %u voices, trigger capo taps:", s.name, (unsigned)s.voices);
+        for (uint8_t t = 0; t < s.triggerLen; t++)
+        {
+            n += snprintf(line + n, sizeof(line) - n, " %u", (unsigned)s.trigger[t]);
+        }
+        Serial.println(line);
+    }
+    if (kSongCount == 0)
+    {
+        Serial.println("  none - add one to songs/songs.json");
+    }
+}
+
+static void songCommand(const char *arg)
+{
+    if (*arg == '\0' || strcmp(arg, "stop") == 0)
+    {
+        masterStopSong();
+        return;
+    }
+    const Song *s = songFind(arg);
+    if (!s)
+    {
+        Serial.println("no such song (see songs)");
+        return;
+    }
+    masterStopSong();
+    startSong(s);
+}
+
 // Pads the master has seen held at any read this cycle, so a strum that comes
 // and goes between the extra reads still counts as a touch for ANY_TOUCH.
 static uint8_t ownTouchedThisCycle = 0;
@@ -1140,6 +1366,17 @@ static bool strumRead(bool mayDrift, uint32_t &scanUs)
 
 void masterLoop()
 {
+    if (song)
+    {
+        serviceSong();
+        char line[64];
+        if (consoleReadLine(line, sizeof(line)))
+        {
+            handleCommand(line);
+        }
+        return;
+    }
+
     uint32_t cycleStartUs = micros();
 
 
