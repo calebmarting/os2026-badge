@@ -56,6 +56,7 @@ enum : uint8_t
 #define PROMPT_OFF 0
 #define PROMPT_HANDS_OFF 1 // blinking: lift your hands, nobody is measuring yet
 #define PROMPT_CALIBRATING 2 // solid: badges are calibrating one by one
+#define PROMPT_SONG 3 // a song is playing: each badge lights up with its piezo
 
 // CMD_SCAN flags.
 // Something somewhere on the neck - any badge, master included - read as held

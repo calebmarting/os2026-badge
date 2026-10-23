@@ -1129,7 +1129,6 @@ static const uint8_t *songPos = nullptr;
 static const uint8_t *songEnd = nullptr;
 static SongEvent songPending; // the next event, due at songNextMs
 static uint32_t songNextMs = 0;
-static uint16_t songSounding = 0; // bit N = badge N's piezo has a note on
 
 // The latest capo-button taps, oldest first, for spotting a song's trigger.
 #define CAPO_TAP_HISTORY 8
@@ -1191,13 +1190,13 @@ static void startSong(const Song *s)
     Serial.print("Easter egg: ");
     Serial.print(s->name);
     Serial.println(" - tap the master's button to stop");
-    // Every badge flashes along while the master owns the bus.
-    generalCall(CMD_PROMPT, PROMPT_HANDS_OFF);
+    // Every badge's LEDs follow its own piezo while the master owns the bus.
+    generalCall(CMD_PROMPT, PROMPT_SONG);
+    songLedsReset();
 
     song = s;
     songPos = s->data;
     songEnd = s->data + s->dataLen;
-    songSounding = 0;
     if (!songReadEvent(songPos, songEnd, songPending))
     {
         masterStopSong();
@@ -1245,6 +1244,7 @@ static void playDrum(uint16_t piezos, uint8_t kind)
         if (id == 0)
         {
             noiseStart(d.centerHz, d.spreadHz, d.ms, d.pulseUs, d.decayTenths);
+            songLedsDrum();
             continue;
         }
         Wire.beginTransmission(wireAddress(id));
@@ -1272,6 +1272,7 @@ static void playPiezos(uint16_t piezos, uint16_t hz)
         if (id == 0)
         {
             noiseStop();
+            songLedsNote(hz);
             if (hz > 0)
             {
                 tone(BUZZER_PIN, hz);
@@ -1305,14 +1306,6 @@ static void serviceSong()
         else if (piezos)
         {
             playPiezos(piezos, songNoteHz(note));
-            if (note)
-            {
-                songSounding |= piezos;
-            }
-            else
-            {
-                songSounding &= ~piezos;
-            }
         }
         if (!songReadEvent(songPos, songEnd, songPending))
         {
@@ -1321,10 +1314,7 @@ static void serviceSong()
         }
         songNextMs += songPending.deltaMs;
     }
-    // The master's own LEDs show which piezos are sounding: its 6 pad LEDs,
-    // with badges 7-12 folded onto the same six.
-    uint8_t shown = (songSounding | (songSounding >> 6)) & 0x3F;
-    updatePlayLeds(shown, songSounding != 0);
+    songLedsRender();
 }
 
 static void recordCapoTap(uint8_t id)

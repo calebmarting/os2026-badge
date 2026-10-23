@@ -304,6 +304,7 @@ void slaveLoop()
         interrupts();
         activeFreq = 0;
         noiseStart(center, spread, ms, pulse, decay);
+        songLedsDrum();
     }
 
     char line[48];
@@ -345,10 +346,20 @@ void slaveLoop()
     }
 
     // The hands-off blink runs while nobody is measuring at all; the solid
-    // calibrating light is set once and then left alone.
+    // calibrating light is set once and then left alone. During a song nobody
+    // measures either, so the light show can switch LEDs whenever it likes.
     static uint8_t shownPrompt = PROMPT_OFF;
     uint8_t prompt = promptMode;
-    if (prompt == PROMPT_HANDS_OFF || prompt != shownPrompt)
+    if (prompt == PROMPT_SONG)
+    {
+        if (shownPrompt != PROMPT_SONG)
+        {
+            songLedsReset();
+        }
+        songLedsRender();
+        shownPrompt = prompt;
+    }
+    else if (prompt == PROMPT_HANDS_OFF || prompt != shownPrompt)
     {
         updatePromptLeds(prompt);
         shownPrompt = prompt;
@@ -368,6 +379,7 @@ void slaveLoop()
 
         // A pitch, even silence, always wins over a drum hit still ringing.
         noiseStop();
+        songLedsNote(freq);
         if (freq != activeFreq || freq > 0)
         {
             activeFreq = freq;

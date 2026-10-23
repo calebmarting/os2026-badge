@@ -76,6 +76,14 @@ void updateAttractLeds();
 // displays never write them, so leaving attract mode has to.
 void endAttractLeds();
 
+// The song light show, one equalizer bar per badge for its own piezo. Feed
+// it the badge's notes and drum hits as they start; render every loop while
+// the song plays (it rate-limits itself).
+void songLedsNote(uint16_t hz); // 0 = the piezo went silent
+void songLedsDrum();
+void songLedsRender();
+void songLedsReset();
+
 // Pseudo white noise on the piezo for durationMs, a drum hit, timed by TC4's
 // interrupt so it needs nothing from the main loop. pulseUs 0: the piezo is
 // flipped at random intervals between centerHz - spreadHz and centerHz +

@@ -100,6 +100,11 @@
 // Easter-egg songs (songs/songs.json): a song's capo-tap trigger must be
 // completed within this window, first tap to last.
 #define SONG_TRIGGER_WINDOW_MS 6000
+// The song light show: each badge's slider is an equalizer bar for its own
+// piezo, jumping to a height set by the note's pitch and falling away over
+// SONG_LED_DECAY_MS (drum hits: full height, SONG_LED_DRUM_DECAY_MS).
+#define SONG_LED_DECAY_MS 450
+#define SONG_LED_DRUM_DECAY_MS 180
 
 // 1 = a badge prints raw/baseline/delta per pad over its own USB serial after
 // every scan, rate-limited to TOUCH_DEBUG_MS. Only the boot state: "debug" on

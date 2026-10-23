@@ -526,6 +526,73 @@ void noiseStop()
     }
 }
 
+static uint32_t eqStartMs = 0;
+static uint32_t eqDrumMs = 0;
+static uint32_t eqLastRenderMs = 0;
+static uint16_t eqDecayMs = SONG_LED_DECAY_MS;
+static uint8_t eqPeak = 0;
+static bool eqSounding = false;
+
+// One LED per octave band across the piezo's useful range, so the bar
+// height follows the tune and neighbouring badges light differently.
+static uint8_t eqHeightForHz(uint16_t hz)
+{
+    uint8_t height = 1;
+    for (uint16_t band = 200; height < NUM_SLIDER_LEDS && hz >= band; band *= 2)
+    {
+        height++;
+    }
+    return height;
+}
+
+void songLedsNote(uint16_t hz)
+{
+    eqSounding = hz > 0;
+    if (hz > 0)
+    {
+        eqPeak = eqHeightForHz(hz);
+        eqDecayMs = SONG_LED_DECAY_MS;
+        eqStartMs = millis();
+    }
+}
+
+void songLedsDrum()
+{
+    eqPeak = NUM_SLIDER_LEDS;
+    eqDecayMs = SONG_LED_DRUM_DECAY_MS;
+    eqStartMs = millis();
+    eqDrumMs = eqStartMs | 1; // 0 means "no drum yet"
+}
+
+void songLedsReset()
+{
+    eqPeak = 0;
+    eqSounding = false;
+    eqDrumMs = 0;
+}
+
+void songLedsRender()
+{
+    uint32_t now = millis();
+    if (now - eqLastRenderMs < 10)
+    {
+        return;
+    }
+    eqLastRenderMs = now;
+
+    // Falls from the peak to nothing over the decay, rounding up so the top
+    // LED goes out last; a note still ringing keeps one lit.
+    uint32_t age = now - eqStartMs;
+    uint8_t level = age >= eqDecayMs ? 0 : (eqPeak * (eqDecayMs - age) + eqDecayMs - 1) / eqDecayMs;
+    if (eqSounding && level == 0)
+    {
+        level = 1;
+    }
+    setSliderLeds((1 << level) - 1);
+    digitalWrite(LED_BUILTIN, eqDrumMs && now - eqDrumMs < 60 ? HIGH : LOW);
+    digitalWrite(LED_BUTTON, eqSounding ? HIGH : LOW);
+}
+
 void updateUkePlayLeds(uint8_t padMask, bool sounding)
 {
     uint8_t strings = groupPads(&kUkulele, padMask);

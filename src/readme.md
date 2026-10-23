@@ -129,6 +129,7 @@ LEDs, on every badge:
 | Everything, solid | calibrating, one badge at a time |
 | Slider filling up | receiving a firmware update |
 | Everything twinkling at random | attract mode: nothing touched for 10 s. Touch anything, or press a button, to play |
+| Sliders bouncing like an equalizer | an easter-egg song is playing; each badge follows its own notes |
 
 ## Setting a badge's ID
 

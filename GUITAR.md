@@ -330,7 +330,17 @@ Tapping fret badges' **capo buttons** in a song's trigger sequence, within
 master turns off the capos the taps switched on. **A tap of the master's
 button stops it.** While a song plays, the master stops handing out scan tokens
 and owns the bus. The converter has already decided which badges play each
-note (see `spread` below), and every fret badge blinks.
+note (see `spread` below).
+
+**The light show.** While a song plays, every badge's slider is an
+equalizer bar for its own piezo. A note makes the bar jump to a height set by
+its pitch, one LED per octave band (under 200 Hz, 200–400, 400–800,
+800–1600, above). It then falls away over `SONG_LED_DECAY_MS` (450 ms), with
+one LED staying lit while the note still rings. A drum hit jumps to full
+height, falls over `SONG_LED_DRUM_DECAY_MS` (180 ms), and pops the built-in
+LED. The right eye is lit while the piezo is sounding. Each badge reacts to
+its own notes, so the neck ripples with the music. The master puts the badges
+in this mode with `CMD_PROMPT` mode 3, `PROMPT_SONG`.
 
 | Song | Trigger | |
 |---|---|---|
