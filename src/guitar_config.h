@@ -110,6 +110,8 @@
 #define OTA_ROW_ERASE_MS 8
 #define OTA_ROW_INSTALL_MS 20
 #define OTA_BADGE_TIMEOUT_MS 30000
+// A badge that has not answered a status read for this long is given up on.
+#define OTA_BADGE_SILENT_MS 3000
 // ---------------------------------------------------------------------------
 
 // The largest string count of any instrument, so it also sizes the master's
@@ -190,7 +192,10 @@ inline uint8_t wireAddress(uint8_t badgeId) { return I2C_ADDR_BASE + badgeId; }
 // 1 = boot into the touch bench instead of the instrument, to sweep the analog
 // settings on real hardware. See touch_diag.h. Never plays a note.
 #define TOUCH_DIAG 0
-#define BUTTON_DEBOUNCE_MS 75
+// Long enough to outlast a tactile switch's bounce (a few ms), short enough
+// that a quick triple tap is still three taps. The master also samples the
+// button on every strum read, so it is not limited to once per cycle.
+#define BUTTON_DEBOUNCE_MS 25
 #define LONG_PRESS_MS 1000
 // Setup mode gives up and reboots unchanged after this long with no input.
 #define SETUP_TIMEOUT_MS 30000

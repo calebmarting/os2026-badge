@@ -2,6 +2,7 @@
 #include "badge_hw.h"
 #include "guitar_config.h"
 #include "badge_config.h"
+#include "bus.h"
 #include "console.h"
 #include "nvm.h"
 #include "ota.h"
@@ -74,7 +75,6 @@ static uint32_t cycleSumUs = 0;
 static uint32_t cycleMaxUs = 0;
 static uint32_t cycleCount = 0;
 static uint32_t lastStatsMs = 0;
-static uint32_t lastRecoverMs = 0;
 
 // Attract mode: last time anything was touched or pressed, and whether the
 // neck is twinkling now.
@@ -96,72 +96,6 @@ static uint32_t scanWindowUs()
         return params.scanUs;
     }
     return ownScanMaxUs + ownScanMaxUs / 4 + SCAN_MARGIN_US;
-}
-
-// SERCOM2 is the MKR Zero's Wire port. The core's master code busy-waits on
-// the bus with no timeout, so a badge that wedges SCL low would hang the whole
-// instrument. LOWTOUT aborts any transfer where SCL is held low for 25-35 ms -
-// the hardware then sets the very flags those loops wait on, so they fall
-// through with an error. CTRLA is only writable with the peripheral disabled.
-//
-// INACTOUT stays off. It treats any SCL low longer than ~200 us as a dead bus,
-// and the master itself holds SCL low between bytes whenever a USB interrupt
-// delays it - on hardware that cut 33-byte debug reads off mid-transfer and
-// left the bus needing recovery. busRecover() covers a genuinely stuck bus.
-static void enableBusTimeouts()
-{
-    SercomI2cm &i2c = SERCOM2->I2CM;
-    i2c.CTRLA.bit.ENABLE = 0;
-    while (i2c.SYNCBUSY.bit.ENABLE)
-    {
-    }
-    i2c.CTRLA.bit.LOWTOUTEN = 1;
-    i2c.CTRLA.bit.INACTOUT = 0;
-    i2c.CTRLA.bit.ENABLE = 1;
-    while (i2c.SYNCBUSY.bit.ENABLE)
-    {
-    }
-    // Same as Wire.begin(): the bus state starts unknown until forced idle.
-    i2c.STATUS.bit.BUSSTATE = 1;
-    while (i2c.SYNCBUSY.bit.SYSOP)
-    {
-    }
-}
-
-static void busBegin()
-{
-    Wire.begin();
-    // 100 kHz, explicitly. With 12 badges and the cabling between them, bus
-    // capacitance is close to the 400 pF limit and 400 kHz will not make the
-    // edges. setClock() re-initialises CTRLA, so it must come before the
-    // timeouts.
-    Wire.setClock(100000);
-    enableBusTimeouts();
-}
-
-// A badge reset mid-byte can be left holding SDA low, waiting for clocks that
-// will never come. Nine clocks walk it out of any byte, then a STOP frees the
-// bus. Pins are driven open-drain style: LOW, or released to the pull-up.
-static void busRecover()
-{
-    Wire.end();
-    pinMode(PIN_WIRE_SDA, INPUT);
-    pinMode(PIN_WIRE_SCL, INPUT);
-    for (uint8_t i = 0; i < 9 && digitalRead(PIN_WIRE_SDA) == LOW; i++)
-    {
-        digitalWrite(PIN_WIRE_SCL, LOW);
-        pinMode(PIN_WIRE_SCL, OUTPUT);
-        delayMicroseconds(5);
-        pinMode(PIN_WIRE_SCL, INPUT);
-        delayMicroseconds(5);
-    }
-    digitalWrite(PIN_WIRE_SDA, LOW);
-    pinMode(PIN_WIRE_SDA, OUTPUT);
-    delayMicroseconds(5);
-    pinMode(PIN_WIRE_SDA, INPUT);
-
-    busBegin();
-    Serial.println("I2C bus recovered");
 }
 
 static void writeFreq(uint8_t id, uint16_t freq)
@@ -317,6 +251,8 @@ static bool noteFrame(uint8_t id, uint8_t b0)
 static bool scanFret(uint8_t id, uint8_t flags)
 {
     uint8_t addr = wireAddress(id);
+    // A glitch on the previous badge's read must not take this one down too.
+    busRecoverIfStuck();
 
     Wire.beginTransmission(addr);
     Wire.write(CMD_SCAN);
@@ -756,7 +692,12 @@ static void logStats()
                            [](const FretLink &f) { return f.fresh && f.missesLog > 0; }, &FretLink::missesLog);
         n = appendIdCounts(line, n, sizeof(line), " | bad", [](const FretLink &f) { return f.badLog > 0; },
                            &FretLink::badLog);
-        appendIdCounts(line, n, sizeof(line), " | stale", [](const FretLink &f) { return !f.fresh; }, nullptr);
+        n = appendIdCounts(line, n, sizeof(line), " | stale", [](const FretLink &f) { return !f.fresh; }, nullptr);
+        uint16_t recovered = busTakeRecoveryCount();
+        if (recovered > 0)
+        {
+            snprintf(line + n, sizeof(line) - n, " | bus recoveries %u", (unsigned)recovered);
+        }
         Serial.println(line);
     }
 
@@ -803,15 +744,7 @@ static void watchOne(uint8_t id)
         return;
     }
 
-    uint8_t addr = wireAddress(id);
-    Wire.beginTransmission(addr);
-    Wire.write(CMD_DEBUG);
-    bool ok = Wire.endTransmission() == 0 && Wire.requestFrom(addr, (uint8_t)DEBUG_LEN) == DEBUG_LEN;
-    for (uint8_t i = 0; ok && i < DEBUG_LEN; i++)
-    {
-        blk[i] = Wire.read();
-    }
-    if (!ok || crc8(blk, DEBUG_LEN - 1, crc8(&addr, 1)) != blk[DEBUG_LEN - 1])
+    if (!busReadBlock(wireAddress(id), CMD_DEBUG, blk, DEBUG_LEN, 3))
     {
         Serial.print("dbg ");
         Serial.print(id);
@@ -874,6 +807,54 @@ static void printInfo()
     }
 }
 
+// Read reliability per badge, with every LED on and then every LED off, so
+// failures can be told apart by distance down the chain and by LED load.
+static void busTest()
+{
+    const uint8_t statusReads = 50;
+    const uint8_t debugReads = 20;
+    for (uint8_t phase = 0; phase < 2; phase++)
+    {
+        bool lit = phase == 0;
+        generalCall(CMD_PROMPT, lit ? PROMPT_CALIBRATING : PROMPT_OFF);
+        updatePromptLeds(lit ? PROMPT_CALIBRATING : PROMPT_OFF);
+        delay(50);
+        busTakeRecoveryCount();
+
+        char line[200];
+        int n = snprintf(line, sizeof(line), "LEDs %s  8-byte reads:", lit ? "on " : "off");
+        for (uint8_t id = 1; id < MAX_BADGES; id++)
+        {
+            uint8_t ok = 0;
+            uint8_t blk[OTA_STATUS_LEN];
+            for (uint8_t i = 0; i < statusReads; i++)
+            {
+                ok += busReadBlock(wireAddress(id), CMD_OTA_STATUS, blk, OTA_STATUS_LEN, 1);
+            }
+            n += snprintf(line + n, sizeof(line) - n, " %u:%u", (unsigned)id, (unsigned)ok);
+        }
+        snprintf(line + n, sizeof(line) - n, "  (of %u)", (unsigned)statusReads);
+        Serial.println(line);
+
+        n = snprintf(line, sizeof(line), "LEDs %s 33-byte reads:", lit ? "on " : "off");
+        for (uint8_t id = 1; id < MAX_BADGES; id++)
+        {
+            uint8_t ok = 0;
+            uint8_t blk[DEBUG_LEN];
+            for (uint8_t i = 0; i < debugReads; i++)
+            {
+                ok += busReadBlock(wireAddress(id), CMD_DEBUG, blk, DEBUG_LEN, 1);
+            }
+            n += snprintf(line + n, sizeof(line) - n, " %u:%u", (unsigned)id, (unsigned)ok);
+        }
+        snprintf(line + n, sizeof(line) - n, "  (of %u), bus recoveries %u", (unsigned)debugReads,
+                 (unsigned)busTakeRecoveryCount());
+        Serial.println(line);
+    }
+    generalCall(CMD_PROMPT, PROMPT_OFF);
+    updatePromptLeds(PROMPT_OFF);
+}
+
 static void printHelp()
 {
     Serial.println("Master commands:");
@@ -882,6 +863,7 @@ static void printHelp()
     Serial.println("  watch N|all|off raw/baseline/delta of badge N (0 = master)");
     Serial.println("  cal             recalibrate the whole neck (hands off)");
     Serial.println("  info            which badges are present");
+    Serial.println("  bustest         I2C read reliability per badge, LEDs on and off");
     Serial.println("  id N            make THIS badge fret N and reboot (it is 0, the master)");
     Serial.println("  params          every tunable and its current value");
     Serial.println("  set NAME VALUE  change one on every badge, until power-off");
@@ -1023,6 +1005,10 @@ static void handleCommand(char *line)
     {
         printInfo();
     }
+    else if (strcmp(line, "bustest") == 0)
+    {
+        busTest();
+    }
     else if (strcmp(line, "id") == 0)
     {
         consoleIdCommand(arg, 0);
@@ -1062,6 +1048,9 @@ static uint8_t ownTouchedThisCycle = 0;
 // Returns true if the master's pads changed.
 static bool strumRead(bool mayDrift, uint32_t &scanUs)
 {
+    // The button too: once a ~20 ms cycle is too coarse for quick multi-taps.
+    buttonUpdate();
+
     uint8_t before = touchMask();
     scanUs = touchScan(mayDrift && !anyTouch);
     if (scanUs > ownScanMaxUs)
@@ -1081,13 +1070,6 @@ void masterLoop()
 {
     uint32_t cycleStartUs = micros();
 
-    // A bus that is still busy between transactions has been left wedged.
-    uint32_t now = millis();
-    if (SERCOM2->I2CM.STATUS.bit.BUSSTATE == 3 && now - lastRecoverMs >= 1000)
-    {
-        lastRecoverMs = now;
-        busRecover();
-    }
 
     scanSeq++;
     uint8_t flags = (inst == &kUkulele) ? SCAN_FLAG_UKULELE : 0;
@@ -1119,6 +1101,7 @@ void masterLoop()
 
 #if TOUCH_DEBUG
     static uint32_t lastDebugMs = 0;
+    uint32_t now = millis();
     if (now - lastDebugMs >= TOUCH_DEBUG_MS)
     {
         lastDebugMs = now;
@@ -1191,9 +1174,9 @@ void masterLoop()
 
 #if MASTER_DEBUG
     static uint32_t lastPrintMs = 0;
-    if (now - lastPrintMs >= 250)
+    if (millis() - lastPrintMs >= 250)
     {
-        lastPrintMs = now;
+        lastPrintMs = millis();
         Serial.print(inst == &kUkulele ? "uke  frets:" : "gtr  frets:");
         for (uint8_t s = 0; s < inst->stringCount; s++)
         {

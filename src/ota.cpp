@@ -1,5 +1,6 @@
 #include "ota.h"
 #include "badge_hw.h"
+#include "bus.h"
 #include "guitar_config.h"
 #include "nvm.h"
 #include "scan_protocol.h"
@@ -292,18 +293,7 @@ bool otaSlaveLoop()
 
 static bool queryStatus(uint8_t id, uint8_t *block)
 {
-    uint8_t addr = wireAddress(id);
-    Wire.beginTransmission(addr);
-    Wire.write(CMD_OTA_STATUS);
-    if (Wire.endTransmission() != 0 || Wire.requestFrom(addr, (uint8_t)OTA_STATUS_LEN) != OTA_STATUS_LEN)
-    {
-        return false;
-    }
-    for (uint8_t i = 0; i < OTA_STATUS_LEN; i++)
-    {
-        block[i] = Wire.read();
-    }
-    return crc8(block, OTA_STATUS_LEN - 1, crc8(&addr, 1)) == block[OTA_STATUS_LEN - 1];
+    return busReadBlock(wireAddress(id), CMD_OTA_STATUS, block, OTA_STATUS_LEN, 3);
 }
 
 bool otaQueryRunningCrc(uint8_t id, uint32_t &crc)
@@ -319,6 +309,7 @@ bool otaQueryRunningCrc(uint8_t id, uint32_t &crc)
 
 static void sendCommand(uint8_t addr, uint8_t cmd, const uint8_t *args, uint8_t len)
 {
+    busRecoverIfStuck();
     Wire.beginTransmission(addr);
     Wire.write(cmd);
     Wire.write(args, len);
@@ -333,6 +324,7 @@ static void sendPage(uint8_t addr, uint16_t page)
     packet[2] = page >> 8;
     memcpy(packet + 3, (const void *)(STAGING_START + (uint32_t)page * NVM_PAGE_SIZE), NVM_PAGE_SIZE);
     packet[OTA_PAGE_PACKET_LEN - 1] = packetCheck(packet);
+    busRecoverIfStuck();
     Wire.beginTransmission(addr);
     Wire.write(packet, OTA_PAGE_PACKET_LEN);
     Wire.endTransmission();
@@ -407,14 +399,24 @@ static bool repairBadge(uint8_t id, uint32_t totalPagesToSend)
     uint8_t addr = wireAddress(id);
     uint32_t resends = 0;
     uint32_t startMs = millis();
+    uint32_t lastAnswerMs = startMs;
     while (millis() - startMs < OTA_BADGE_TIMEOUT_MS)
     {
         uint8_t block[OTA_STATUS_LEN];
         if (!queryStatus(id, block))
         {
+            // Gone quiet: give up on this badge rather than stall the rest.
+            if (millis() - lastAnswerMs > OTA_BADGE_SILENT_MS)
+            {
+                Serial.print("OTA fret ");
+                Serial.print(id);
+                Serial.println(" stopped answering");
+                return false;
+            }
             delay(10);
             continue;
         }
+        lastAnswerMs = millis();
         uint8_t st = block[0];
         uint16_t missing = block[1] | (block[2] << 8);
         if (st == OTA_VERIFIED)

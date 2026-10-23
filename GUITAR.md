@@ -78,10 +78,19 @@ counts are in the stats line.
 
 **Never blocking.** A badge that's absent NACKs and is skipped. A badge that
 wedges SCL low trips the SERCOM's SCL-low timeout (25–35 ms), which ends the
-transfer with an error. A bus left busy gets a 9-clock recovery, at most once a
-second. The SERCOM's ~200 us inactivity timeout is deliberately off: it fired
-whenever a USB interrupt delayed the master between bytes, cutting long reads
-short.
+transfer with an error. That timeout runs from the SERCOM slow clock, which
+the Arduino core never enables; `src/bus.cpp` turns it on (the 32 kHz crystal,
+GCLK1) on every badge. Before that, the timeout silently did nothing. The
+inactivity timeout stays off, because it would count the master pausing
+between bytes as a dead bus.
+
+**Glitches.** If a read leaves the bus busy (a glitch taken for a START, or a
+transfer cut short), the master clocks out the stuck badge and re-initialises
+before the next transaction. A glitch therefore costs one read rather than
+every read after it. Long reads (the debug and OTA status blocks) retry up to
+3 times. The stats line counts recoveries. Both sides also use a 300–600 ns
+SDA hold time, so a slow or ringing SCL edge on the long chain can't turn a
+data change into a false START or STOP.
 
 ## Wire protocol
 
@@ -242,6 +251,7 @@ Open the master's USB serial at 115200 (`pio device monitor`).
 | `watch N` / `watch all` / `watch off` | raw/baseline/delta for badge N (0 = master), pulled over I2C; repeat `watch N` to add or remove badges |
 | `cal` | recalibrate the whole neck (hands off) |
 | `info` | which badges are present or calibrated, plus each one's firmware CRC |
+| `bustest` | I2C read reliability per badge, 50 x 8-byte and 20 x 33-byte reads, with every LED on and then every LED off |
 | `id` / `id N` | show this badge's ID / make it ID N and reboot (works on every badge's console) |
 | `params` | every tunable with its current value and range |
 | `set NAME VALUE` | change one on every badge |

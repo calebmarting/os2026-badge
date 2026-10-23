@@ -1,0 +1,23 @@
+// The I2C bus between the badges: setup, timeouts, recovery, and checked
+// block reads that survive a glitch.
+#pragma once
+
+#include <Arduino.h>
+
+// Master: Wire as controller at 100 kHz, plus the timeouts and SDA hold time.
+void busBegin();
+// Fret badge: call after Wire.begin(address) - SDA hold time and the SCL-low
+// timeout on its side of the bus.
+void busSlaveConfigure();
+
+// If a glitch left the bus busy (or its state unknown), clock out whatever a
+// badge is stuck in and re-initialise. Returns true if it had to. Cheap enough
+// to call before every transaction.
+bool busRecoverIfStuck();
+// Recoveries since the last call, for the stats line.
+uint16_t busTakeRecoveryCount();
+
+// Writes cmd to addr, then reads a len-byte block whose last byte is a CRC-8
+// seeded with the address (the debug and OTA status blocks). Up to `attempts`
+// tries, recovering the bus between them. True if a block checked out.
+bool busReadBlock(uint8_t addr, uint8_t cmd, uint8_t *block, uint8_t len, uint8_t attempts);

@@ -3,6 +3,7 @@
 #include "guitar_config.h"
 #include "scan_protocol.h"
 #include "badge_config.h"
+#include "bus.h"
 #include "console.h"
 #include "ota.h"
 #include "params.h"
@@ -138,6 +139,7 @@ void slaveBegin(uint8_t id)
     // General call on, for the commands every badge hears at once.
     otaSlaveBegin(myAddress);
     Wire.begin(myAddress, true);
+    busSlaveConfigure();
     Wire.onRequest(onRequest);
     Wire.onReceive(onReceive);
 
