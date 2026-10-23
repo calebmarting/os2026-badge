@@ -66,21 +66,25 @@ DRUM_BASE = 128         # event note values from here up are drum hits
 #             it does not stop dead - a burst slows (its pitch falls, like a
 #             kick or tom), clicks narrow at the same rate (so a cymbal never
 #             slides back down into the resonance)
-# Generated into the firmware, so this table is the only place these live. The piezo resonates near 4 kHz and says little below
-# ~150 Hz, so "low" drums sit higher than their real pitch.
+#   piezos    how many of the drum piezos one hit plays on at once - the way
+#             to make a burst louder, since it is already full-rail
+# Generated into the firmware, so this table is the only place these live.
+# The piezo resonates near 4 kHz and says little below ~150 Hz, so "low"
+# drums sit higher than their real pitch, and fade gently: slowing them down
+# takes them where the piezo is quietest.
 DRUM_SOUNDS = [
-    # name, center Hz, spread Hz, ms, pulse us, decay tenths
-    ("kick", 160, 60, 70, 0, 10),
-    ("snare", 1500, 1300, 90, 0, 10),
+    # name, center Hz, spread Hz, ms, pulse us, decay tenths, piezos
+    ("kick", 160, 60, 70, 0, 4, 2),
+    ("snare", 1500, 1300, 90, 0, 10, 1),
     # Hats and cymbals sit clear of the piezo's ~4 kHz resonance and play as
     # clicks: a full square burst across it rang shrill instead of hissing.
-    ("closed hat", 7500, 2000, 25, 4, 0),
-    ("open hat", 7500, 2000, 140, 4, 20),
-    ("crash", 9000, 2500, 380, 4, 30),
-    ("ride", 7500, 1500, 140, 6, 10),
-    ("low tom", 230, 40, 110, 0, 10),
-    ("high tom", 340, 50, 100, 0, 10),
-    ("clap", 1800, 1500, 45, 0, 0),
+    ("closed hat", 7500, 2000, 25, 2, 0, 1),
+    ("open hat", 7500, 2000, 140, 2, 20, 1),
+    ("crash", 9000, 2500, 380, 2, 30, 1),
+    ("ride", 7500, 1500, 140, 4, 10, 1),
+    ("low tom", 230, 40, 110, 0, 4, 2),
+    ("high tom", 340, 50, 100, 0, 4, 2),
+    ("clap", 1800, 1500, 45, 0, 0, 1),
 ]
 DRUM_INDEX = {sound[0]: i for i, sound in enumerate(DRUM_SOUNDS)}
 
@@ -387,17 +391,19 @@ def song_events(song, songs_dir):
 
 
 def drum_timeline(hits, pool):
-    """Each hit goes to one of the drum piezos (badges pool..11 - never the
-    master), preferring one that has finished its last hit."""
+    """Each hit goes to as many of the drum piezos (badges pool..11 - never
+    the master) as its sound asks for, preferring ones that have finished their
+    last hit, then the ones that will finish soonest."""
     piezos = list(range(pool, PIEZOS))
     busy_until = {b: -1.0 for b in piezos}
     timeline = []
     for ms, kind in sorted(hits):
-        free = [b for b in piezos if busy_until[b] <= ms]
-        b = free[0] if free else min(piezos, key=lambda x: busy_until[x])
-        busy_until[b] = ms + DRUM_SOUNDS[kind][3]
+        want = min(DRUM_SOUNDS[kind][6], len(piezos))
+        chosen = sorted(piezos, key=lambda b: (busy_until[b] > ms, busy_until[b], b))[:want]
+        for b in chosen:
+            busy_until[b] = ms + DRUM_SOUNDS[kind][3]
         # Order 2: after any tone event in the same millisecond.
-        timeline.append((ms, 2, 1 << b, DRUM_BASE + kind))
+        timeline.append((ms, 2, mask_of(chosen), DRUM_BASE + kind))
     return timeline
 
 
@@ -562,7 +568,7 @@ def build(manifest_path, out_path):
                        % (song["name"], ident, len(song.get("trigger", [])), voices, len(events), ident))
 
     lines.append("const SongDrum kSongDrums[] = {")
-    for name, center, spread, ms, pulse, decay in DRUM_SOUNDS:
+    for name, center, spread, ms, pulse, decay, _ in DRUM_SOUNDS:
         lines.append("    {%d, %d, %d, %d, %d}, // %s" % (center, spread, ms, pulse, decay, name))
     lines.append("};")
     lines.append("const uint8_t kSongDrumCount = %d;" % len(DRUM_SOUNDS))
