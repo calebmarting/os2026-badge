@@ -66,7 +66,7 @@ which is what gives a ukulele its sound:
 Slider LED 3 stays dark, and every badge on the neck shows this same layout -
 not just the master. Badges group in threes rather than pairs, so each ukulele
 string is louder than a guitar string. Everything else - muting, strumming,
-sustain, hammer-ons - behaves identically.
+sustain, both strum modes - behaves identically.
 
 > The ukulele plays at true pitch: its whole range is 262-831 Hz, comfortably
 > inside what the piezo reproduces well. Only the guitar is shifted up an
@@ -100,10 +100,18 @@ Touching a strum pad **mutes** that string straight away, so resting a finger on
 it damps the note. What happens when you let go depends on how long you held it:
 
 - **Quick tap** (up to `STRUM_MAX_HOLD_MS`, default 250 ms) - plucks the string.
-- **Hold longer** - it stays muted. This is your palm mute.
+- **Hold longer** - it stays muted. This is your palm mute. For `MUTE_LOCKOUT_MS`
+  (75 ms) after you let go, the pad ignores a bounce of your finger, so lifting
+  off a mute cannot accidentally pluck.
 
-A note rings for `SUSTAIN_MS` (default 3 s) and then silences itself. Moving your
-fingers while a note is ringing retunes it, which gives you hammer-ons and slides.
+A note rings for `SUSTAIN_MS` (default 3 s) and then silences itself. What
+happens if you change the chord while it rings depends on the strum mode -
+**triple-tap the master's button** to switch:
+
+- **Realistic** (the default) - moving the fretting finger on a ringing string
+  stops it, like a real guitar. Strum again to sound the new fret.
+- **Ringing** - notes keep sounding and follow your fingers, which gives you
+  hammer-ons and slides. The master's **left eye** is lit in this mode.
 
 LEDs, on every badge:
 
@@ -113,6 +121,7 @@ LEDs, on every badge:
 | `LED_BUILTIN` | pad 6 |
 | Right eye | this badge is sounding a note |
 | Forehead | **only** on the master, and **only** in ukulele mode |
+| Left eye | **only** on the master, and **only** in ringing mode |
 | Everything, fast blink | calibrating soon - hands off the neck |
 | Everything, solid | calibrating, one badge at a time |
 | Slider filling up | receiving a firmware update |
@@ -146,8 +155,8 @@ of flash. Doing nothing for 30 s leaves setup without saving. A badge that has
 never been configured comes up as the master.
 
 Outside setup mode, a **short** press does something different depending on the
-badge: on the master it toggles ukulele mode (and a double tap recalibrates), on
-a fret badge it toggles a capo.
+badge: on the master one tap toggles ukulele mode, two recalibrate and three
+switch the strum mode; on a fret badge a tap toggles a capo.
 
 ## Wiring
 
@@ -173,7 +182,8 @@ measures its idle pads. Whatever is touched during calibration becomes that pad'
 idea of "not touched".
 
 **Double-tap the master's button** to recalibrate whenever the neck starts acting
-up (a single tap is the ukulele toggle, so it now lands a moment later). A badge
+up (taps are counted until a short pause, so every master button action lands
+about a third of a second after the last tap). A badge
 that reboots on its own - a brown-out, or plugged in late - is recalibrated
 automatically when it reappears.
 
@@ -192,7 +202,10 @@ The playing-feel settings stay in `guitar_config.h`:
 | `STRUM_MAX_HOLD_MS` | 250 | longer hold = mute instead of strum |
 | `GUITAR_OCTAVE_SHIFT` | 1 | guitar plays an octave above concert pitch |
 | `UKE_OCTAVE_SHIFT` | 0 | ukulele plays at concert pitch |
-| `PITCH_TRACKS_FRETS` | 1 | 0 latches pitch at the strum, losing hammer-ons |
+| `REALISTIC_STRUM` | 1 | 1 = a fret change stops a ringing note; 0 = ringing mode |
+| `MUTE_LOCKOUT_MS` | 75 | after a mute, a re-touch this soon cannot pluck |
+| `FRET_CHANGE_GRACE_MS` | 30 | a fret change must last this long to stop a note |
+| `PITCH_TRACKS_FRETS` | 1 | ringing mode: 0 latches pitch at the strum, losing hammer-ons |
 | `MASTER_DEBUG` | 0 | 1 prints resolved frets and pitches over serial |
 | `TOUCH_DIAG` | 0 | 1 boots the touch bench instead of the instrument |
 

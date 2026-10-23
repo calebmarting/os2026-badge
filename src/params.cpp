@@ -21,6 +21,9 @@ Params params = {
     ATTRACT_IDLE_SECONDS,
     PTC_PAD_ISOLATE,
     STRUM_READ_EVERY,
+    MUTE_LOCKOUT_MS,
+    REALISTIC_STRUM,
+    FRET_CHANGE_GRACE_MS,
 };
 
 // Order is the wire index - append only, never reorder.
@@ -43,6 +46,9 @@ static const ParamInfo kParams[] = {
     {"attract", 0, 3600, false},
     {"isolate", 0, 1, true},
     {"strumevery", 0, 11, false},
+    {"mutelock", 0, 1000, false},
+    {"realistic", 0, 1, false},
+    {"fretgrace", 0, 1000, false},
 };
 #define NUM_PARAMS (sizeof(kParams) / sizeof(kParams[0]))
 
@@ -90,6 +96,9 @@ int16_t paramGet(uint8_t index)
     case 15: return params.attractSeconds;
     case 16: return params.isolate;
     case 17: return params.strumEvery;
+    case 18: return params.muteLockMs;
+    case 19: return params.realistic;
+    case 20: return params.fretGraceMs;
     default: return 0;
     }
 }
@@ -120,6 +129,9 @@ bool paramSet(uint8_t index, int16_t value)
     case 15: params.attractSeconds = value; break;
     case 16: params.isolate = value; break;
     case 17: params.strumEvery = value; break;
+    case 18: params.muteLockMs = value; break;
+    case 19: params.realistic = value; break;
+    case 20: params.fretGraceMs = value; break;
     }
     return true;
 }

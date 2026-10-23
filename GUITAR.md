@@ -206,6 +206,9 @@ until power-off. Copy values you settle on back into the header. Settings marked
 | `PTC_PAD_ISOLATE` | `isolate` **R** | 1 | only the measured pad is on the PTC, the other five held LOW. 0 = all six for the whole scan |
 | `SCAN_US` | `scanus` | 0 | fixed scan window in us, 0 = derived |
 | `STRUM_READ_EVERY` | `strumevery` | 2 | extra strum-pad read after every N fret badges, 0 = once a cycle |
+| `MUTE_LOCKOUT_MS` | `mutelock` | 75 | after a mute is let go, a touch starting this soon is a bounce and cannot pluck |
+| `REALISTIC_STRUM` | `realistic` | 1 | 1 = a fret change stops a ringing note; 0 = ringing mode (master's left eye lit). Triple-tap the master to switch |
+| `FRET_CHANGE_GRACE_MS` | `fretgrace` | 30 | how long a fret change must last before it stops a note |
 | `ATTRACT_IDLE_SECONDS` | `attract` | 10 | idle seconds before the LEDs twinkle, 0 = never |
 | `ATTRACT_STEP_MS` | – | 150 | how often each badge reshuffles its LEDs |
 | `ATTRACT_ON_PERCENT` | – | 40 | chance each LED is lit per reshuffle |
@@ -213,7 +216,7 @@ until power-off. Copy values you settle on back into the header. Settings marked
 | `STALE_SCANS` | – | 4 | misses in a row before a badge reads as gone |
 | `TOUCH_CAL_TARGET` | – | 120 | where COMPCAP parks the idle reading |
 | `CAL_LEAD_MS` | – | 1500 | hands-off blink before calibrating |
-| `DOUBLE_TAP_MS` | – | 350 | master double-tap window (recalibrate) |
+| `DOUBLE_TAP_MS` | – | 350 | master tap window: 1 tap ukulele, 2 recalibrate, 3 strum mode |
 | `GUITAR_OCTAVE_SHIFT` | – | 1 | guitar plays an octave above concert pitch |
 | `UKE_OCTAVE_SHIFT` | – | 0 | ukulele at concert pitch |
 

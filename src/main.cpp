@@ -76,24 +76,32 @@ void loop()
         {
             masterNoteActivity();
         }
-        // One tap toggles the ukulele, two quick taps recalibrate the neck. The
-        // toggle has to wait out the double-tap window to know which it was.
-        static bool tapPending = false;
+        // Taps are counted until DOUBLE_TAP_MS passes with no new one: one
+        // toggles the ukulele, two recalibrate the neck, three toggle
+        // realistic strumming. Each has to wait out the window to know which
+        // it was.
+        static uint8_t taps = 0;
         static uint32_t tapMs = 0;
-        if (tapped && tapPending && millis() - tapMs <= DOUBLE_TAP_MS)
+        if (tapped)
         {
-            tapPending = false;
-            masterRecalibrate();
-        }
-        else if (tapped)
-        {
-            tapPending = true;
+            taps++;
             tapMs = millis();
         }
-        else if (tapPending && millis() - tapMs > DOUBLE_TAP_MS)
+        else if (taps > 0 && millis() - tapMs > DOUBLE_TAP_MS)
         {
-            tapPending = false;
-            masterToggleUkulele();
+            if (taps == 1)
+            {
+                masterToggleUkulele();
+            }
+            else if (taps == 2)
+            {
+                masterRecalibrate();
+            }
+            else
+            {
+                masterToggleRealistic();
+            }
+            taps = 0;
         }
     }
     else if (tapped)

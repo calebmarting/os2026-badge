@@ -21,3 +21,7 @@ void masterRecalibrate();
 // Something was played or pressed: leaves attract mode and restarts its idle
 // countdown. Touches are noticed on their own; main calls this for the button.
 void masterNoteActivity();
+
+// Realistic strumming (a fret change stops a ringing note) against ringing
+// mode (notes keep sounding and follow the frets). Left eye lit = ringing.
+void masterToggleRealistic();

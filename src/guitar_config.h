@@ -84,8 +84,9 @@
 #define CAL_RETRY_MS 2000
 // How long the master waits at power-up for the fret badges to boot.
 #define STARTUP_MS 500
-// Two taps on the master's button within this window recalibrate the neck. A
-// single tap toggles the ukulele, so it now lands this much later.
+// Taps on the master's button are counted until this long passes with no new
+// one: 1 toggles the ukulele, 2 recalibrate, 3 toggle realistic strumming.
+// Each lands this much after the last tap.
 #define DOUBLE_TAP_MS 350
 
 // Attract mode: after ATTRACT_IDLE_SECONDS with nothing touched and no button
@@ -137,6 +138,17 @@ inline uint8_t wireAddress(uint8_t badgeId) { return I2C_ADDR_BASE + badgeId; }
 // A strum pad held longer than this is a mute-and-hold, not a strum, so
 // releasing it stays silent. Raise it if quick strums are being swallowed.
 #define STRUM_MAX_HOLD_MS 250
+// After a mute is let go of, a touch that starts within this window is the
+// finger bouncing off the pad, not a new strum: its release stays silent.
+#define MUTE_LOCKOUT_MS 75
+// 1 = realistic strumming: a strummed note rings for SUSTAIN_MS, but changing
+// that string's fret stops it and it has to be strummed again. 0 = ringing
+// mode, where notes keep sounding and follow the frets (PITCH_TRACKS_FRETS),
+// shown by the master's left eye. Triple-tap the master's button to switch.
+#define REALISTIC_STRUM 1
+// A fret change must hold this long before it stops a note, so one glitchy
+// frame cannot cut a ringing string.
+#define FRET_CHANGE_GRACE_MS 30
 // The master reads its strum pads after every STRUM_READ_EVERY fret badges as
 // well as in its own slot: 2 gives 6 reads per cycle, ~3.5 ms apart, against
 // one per ~17 ms cycle. A quick strum then lasts several reads instead of
@@ -148,8 +160,8 @@ inline uint8_t wireAddress(uint8_t badgeId) { return I2C_ADDR_BASE + badgeId; }
 // (164-1319 Hz). The ukulele's 262-880 Hz is already fine at true pitch.
 #define GUITAR_OCTAVE_SHIFT 1
 #define UKE_OCTAVE_SHIFT 0
-// 1 = fretting a ringing string retunes it, giving hammer-ons and slides.
-// 0 = pitch is latched at the moment of the strum.
+// Ringing mode only (REALISTIC_STRUM 0): 1 = fretting a ringing string
+// retunes it, giving hammer-ons and slides; 0 = pitch is latched at the strum.
 #define PITCH_TRACKS_FRETS 1
 
 // How long the bus stays silent after the master hands a badge the scan token

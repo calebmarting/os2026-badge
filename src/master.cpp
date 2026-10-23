@@ -57,6 +57,18 @@ static uint32_t stringStartMs[NUM_STRINGS];
 static uint32_t padPressMs[NUM_STRINGS];
 static bool padWasDown[NUM_STRINGS];
 
+// When a mute (a hold longer than STRUM_MAX_HOLD_MS) was last let go of. A
+// finger leaving the pad can flicker it on and off, and that flicker looks
+// exactly like a quick strum - so a touch that starts within the lockout is
+// treated as more of the same mute, and its release stays silent.
+static uint32_t muteReleaseMs[NUM_STRINGS];
+static bool pressIsMuteBounce[NUM_STRINGS];
+
+// Realistic mode: the fret each ringing note was plucked at, and since when
+// the string's fret has disagreed with it (0 = it agrees).
+static uint8_t pluckedFret[NUM_STRINGS];
+static uint32_t fretMovedMs[NUM_STRINGS];
+
 // Cycle timing, reset every stats line.
 static uint32_t cycleSumUs = 0;
 static uint32_t cycleMaxUs = 0;
@@ -550,14 +562,23 @@ static void updateStrum()
         if (down && !padWasDown[s])
         {
             padPressMs[s] = now;
+            pressIsMuteBounce[s] = now - muteReleaseMs[s] < params.muteLockMs;
             setStringFreq(s, 0);
         }
         else if (!down && padWasDown[s])
         {
-            if (now - padPressMs[s] <= STRUM_MAX_HOLD_MS)
+            if (pressIsMuteBounce[s] || now - padPressMs[s] > STRUM_MAX_HOLD_MS)
+            {
+                // The end of a mute, or a bounce on the end of one. Every
+                // bounce restarts the lockout, so a long chatter stays quiet.
+                muteReleaseMs[s] = now;
+            }
+            else
             {
                 setStringFreq(s, freqForFret(inst, s, fretForString[s]));
                 stringStartMs[s] = now;
+                pluckedFret[s] = fretForString[s];
+                fretMovedMs[s] = 0;
             }
         }
 
@@ -582,6 +603,26 @@ static void updateSustain()
             continue;
         }
 
+        if (params.realistic)
+        {
+            // Like a real string: moving the fretting finger stops the note,
+            // and it needs strumming again. The change has to hold for
+            // fretGraceMs first, so one bad frame cannot cut a ringing note.
+            if (fretForString[s] == pluckedFret[s])
+            {
+                fretMovedMs[s] = 0;
+            }
+            else if (fretMovedMs[s] == 0)
+            {
+                fretMovedMs[s] = now | 1; // 0 means "not moved"
+            }
+            else if (now - fretMovedMs[s] >= params.fretGraceMs)
+            {
+                setStringFreq(s, 0);
+            }
+            continue;
+        }
+
 #if PITCH_TRACKS_FRETS
         // Retune a note that is still ringing, which is what makes hammer-ons
         // and slides work. setStringFreq() is a no-op when nothing moved, so
@@ -589,6 +630,20 @@ static void updateSustain()
         setStringFreq(s, freqForFret(inst, s, fretForString[s]));
 #endif
     }
+}
+
+void masterToggleRealistic()
+{
+    paramSet(paramFind("realistic"), params.realistic ? 0 : 1);
+    // Notes already ringing carry on. Going realistic, they are cut by the
+    // next fret change like any other.
+    for (uint8_t s = 0; s < NUM_STRINGS; s++)
+    {
+        pluckedFret[s] = fretForString[s];
+        fretMovedMs[s] = 0;
+    }
+    Serial.println(params.realistic ? "Realistic strumming: a fret change stops the note"
+                                    : "Ringing mode: notes follow the frets");
 }
 
 // Silences everything under the OLD instrument before switching. The
@@ -618,6 +673,9 @@ void masterToggleUkulele()
         // a finger resting across the toggle does not read as a fresh strum.
         padWasDown[s] = (strings & (1 << s)) != 0;
         padPressMs[s] = now;
+        pressIsMuteBounce[s] = false;
+        pluckedFret[s] = 0;
+        fretMovedMs[s] = 0;
     }
 
     Serial.println(inst == &kUkulele ? "Ukulele mode" : "Guitar mode");
@@ -638,6 +696,8 @@ static void renderLeds(bool sounding)
     // The forehead LED means exactly one thing on exactly one badge: this is
     // the master and it is in ukulele mode. Nothing else ever lights it.
     digitalWrite(LED_ACCEL, inst == &kUkulele ? HIGH : LOW);
+    // Same for the left eye: the master is in ringing mode (realistic off).
+    digitalWrite(LED_MIC, params.realistic ? LOW : HIGH);
 
     if (inst == &kUkulele)
     {

@@ -48,6 +48,14 @@ struct Params
     // Master only: extra strum-pad reads, one after every this many fret
     // badges. 0 = only the master's own slot.
     uint8_t strumEvery;
+    // Master only: after a mute is let go of, a touch starting within this
+    // many ms is a bounce of the same mute and cannot pluck.
+    uint16_t muteLockMs;
+    // Master only: 1 = a fret change stops a ringing note (it must be strummed
+    // again); 0 = notes keep ringing and follow the frets.
+    uint8_t realistic;
+    // Master only: how long a fret change must last before it stops a note.
+    uint16_t fretGraceMs;
 };
 
 extern Params params;
