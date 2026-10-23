@@ -399,8 +399,22 @@ intervals around a center pitch for the hit's length, the same idea as
 `examples/drum`. Each General MIDI drum key maps to one of 9 sounds: kick,
 snare, closed and open hi-hat, crash, ride, low and high tom, and clap. The
 sounds are set in `DRUM_SOUNDS` in `tools/song_convert.py`, which generates
-them into the firmware. Edit a sound there and rebuild. A hit goes to whichever
-drum piezo is free, and runs on that badge without blocking. The master just
+them into the firmware. Edit a sound there and rebuild. Each sound has a
+center pitch, a spread, a length, and two settings:
+
+- `pulse`: `0` plays a loud square-ish burst. A non-zero value plays short
+  clicks of that many µs at the random rate instead, which is quieter and
+  more like hiss. The width is the volume knob. Hi-hats, crash and ride use
+  4–6 µs.
+- `decay`: a fade, in tenths. A burst slows down as it fades, so its pitch
+  falls the way a kick or tom does. Clicks get narrower at an unchanged rate,
+  so a cymbal never slides back into the piezo's ~4 kHz resonance.
+
+Cymbals sit above that resonance (5.5–11.5 kHz). Crossing it is what makes a
+long hit ring shrill.
+
+A hit goes to whichever drum piezo is free. That badge's TC4 timer interrupt
+plays it, so the timing doesn't depend on its main loop. The master just
 sends `CMD_NOISE`.
 
 With `spread`, nothing is dropped below `max_notes`. Past that, or past
