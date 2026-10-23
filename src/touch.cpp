@@ -116,9 +116,20 @@ uint32_t touchScan(bool globalIdle)
         PadState &p = pads[i];
         p.raw = raw[i];
         p.delta = (int32_t)raw[i] - baseline(p);
-        // Hysteresis: once on, a pad stays on down to the lower threshold.
+        // Hysteresis: once on, a pad stays on down to the lower threshold -
+        // and the same margin applies on the negative side, so a firm finger
+        // hovering around -negThreshold cannot chatter either.
         pos[i] = p.delta > (p.on ? params.offThreshold : params.onThreshold);
-        neg[i] = p.delta < -params.negThreshold;
+        int32_t negLine = params.negThreshold;
+        if (p.on)
+        {
+            negLine -= params.onThreshold - params.offThreshold;
+            if (negLine < 1)
+            {
+                negLine = 1;
+            }
+        }
+        neg[i] = p.delta < -negLine;
     }
 
     uint8_t newNeg = 0;

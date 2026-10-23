@@ -19,9 +19,9 @@
 #define TOUCH_ON_THRESHOLD 35
 #define TOUCH_OFF_THRESHOLD 30
 
-// A pad bridged to a held neighbour by one finger drains through it and swings
-// *below* its baseline - pad 3 reaches -56 to -110 while pad 4 reads positive.
-// The same negative swing with no held neighbour means the baseline is wrong.
+// A pad bridged to a neighbour by one finger drains through it and swings
+// *below* its baseline. On the neck, a firm ukulele C-string finger (pad 3)
+// spilling onto pad 4 read -110 to -118 while pad 4 only reached +21..+34.
 #define TOUCH_NEG_THRESHOLD 40
 // 0 = a negative is never a touch.
 // 1 = a negative is a touch only while an adjacent pad reads positive; with no
@@ -29,8 +29,11 @@
 //     idle* re-baselines the pad. Never during play: a hand on the neck can
 //     pull a pad negative, and re-zeroing it there leaves it stuck on when
 //     the hand lifts.
-// 2 = a negative is always a touch and never re-baselines (the old rule).
-#define TOUCH_NEG_MODE 1
+// 2 = a negative is always a touch and never re-baselines.
+// 2 is the default: with one badge measuring at a time, untouched pads sit
+// within +/-1 of their baseline, so a negative now means a finger - and mode 1
+// threw away that C-string finger because its neighbour was under +35.
+#define TOUCH_NEG_MODE 2
 #define TOUCH_NEG_RECAL_SCANS 50
 
 // Consecutive scans that must agree before a pad turns on or off.

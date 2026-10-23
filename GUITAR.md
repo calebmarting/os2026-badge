@@ -74,7 +74,9 @@ counts are in the stats line.
 **Never blocking.** A badge that's absent NACKs and is skipped. A badge that
 wedges SCL low trips the SERCOM's SCL-low timeout (25–35 ms), which ends the
 transfer with an error. A bus left busy gets a 9-clock recovery, at most once a
-second.
+second. The SERCOM's ~200 us inactivity timeout is deliberately off: it fired
+whenever a USB interrupt delayed the master between bytes, cutting long reads
+short.
 
 ## Wire protocol
 
@@ -150,15 +152,20 @@ cross the bus.
 3. **Hysteresis:** a pad turns on at `d > on` (35) and stays on until `d < off`
    (30). `off` sits just under `on`, not at half of it, because a released pad
    next to a held one still carries up to +30 of crosstalk.
-4. **Negative readings** (`d < -neg`, 40), set by `negmode`:
+4. **Negative readings** (`d < -neg`, 40, with the same hysteresis margin as
+   the positive side once on), set by `negmode`:
    - `0`: never a touch.
-   - `1` (default): a touch only while an **adjacent** pad reads on. That's a
+   - `2` (default): always a touch, never re-baselines. A firm finger that
+     spills onto the next pad reads strongly negative (-110 to -118 measured on
+     a ukulele C-string finger), and with one badge measuring at a time,
+     untouched pads sit within ±1, so a negative means a finger.
+   - `1`: a touch only while an **adjacent** pad reads on. That's a
      finger bridging two pads, which drains the measured one negative. A
      negative with no such neighbour, held for `negrecal` (50) scans **while
      the whole neck reads idle**, means the baseline is wrong and the pad is
      re-baselined. Never during play: re-zeroing a pad that a hand pulled
-     negative leaves it stuck on once the hand lifts.
-   - `2`: always a touch, never re-baselines. This is the old behaviour.
+     negative leaves it stuck on once the hand lifts. It drops a finger whose
+     neighbour reads only partly on, which is why it is no longer the default.
 5. **Debounce:** a pad changes state only after `debounce` (2) scans in a row
    agree.
 6. **Drift:** `base += (raw - base) >> drift` (6, about a second), but only when
@@ -180,7 +187,7 @@ until power-off. Copy values you settle on back into the header. Settings marked
 | `TOUCH_ON_THRESHOLD` | `on` | 35 | counts over baseline to turn on |
 | `TOUCH_OFF_THRESHOLD` | `off` | 30 | counts over baseline to stay on |
 | `TOUCH_NEG_THRESHOLD` | `neg` | 40 | counts under baseline that count as negative |
-| `TOUCH_NEG_MODE` | `negmode` | 1 | 0 ignore, 1 neighbour-gated, 2 always a touch |
+| `TOUCH_NEG_MODE` | `negmode` | 2 | 0 ignore, 1 neighbour-gated, 2 always a touch |
 | `TOUCH_NEG_RECAL_SCANS` | `negrecal` | 50 | unexplained-negative scans before re-baselining |
 | `TOUCH_DEBOUNCE_SCANS` | `debounce` | 2 | agreeing scans needed to change state |
 | `TOUCH_DRIFT_SHIFT` | `drift` | 6 | idle baseline IIR shift |

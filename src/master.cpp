@@ -89,8 +89,12 @@ static uint32_t scanWindowUs()
 // the bus with no timeout, so a badge that wedges SCL low would hang the whole
 // instrument. LOWTOUT aborts any transfer where SCL is held low for 25-35 ms -
 // the hardware then sets the very flags those loops wait on, so they fall
-// through with an error. INACTOUT returns a bus left "busy" by a glitch to idle.
-// Both live in CTRLA, which is only writable with the peripheral disabled.
+// through with an error. CTRLA is only writable with the peripheral disabled.
+//
+// INACTOUT stays off. It treats any SCL low longer than ~200 us as a dead bus,
+// and the master itself holds SCL low between bytes whenever a USB interrupt
+// delays it - on hardware that cut 33-byte debug reads off mid-transfer and
+// left the bus needing recovery. busRecover() covers a genuinely stuck bus.
 static void enableBusTimeouts()
 {
     SercomI2cm &i2c = SERCOM2->I2CM;
@@ -99,7 +103,7 @@ static void enableBusTimeouts()
     {
     }
     i2c.CTRLA.bit.LOWTOUTEN = 1;
-    i2c.CTRLA.bit.INACTOUT = 3; // 20-21 SCL cycles, ~200 us at 100 kHz
+    i2c.CTRLA.bit.INACTOUT = 0;
     i2c.CTRLA.bit.ENABLE = 1;
     while (i2c.SYNCBUSY.bit.ENABLE)
     {
